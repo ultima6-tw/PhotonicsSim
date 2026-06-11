@@ -10,16 +10,9 @@ No installation. No build step. Open the HTML files directly in a browser.
 
 PhotonicsSim was developed entirely through conversational sessions with **[Claude Code](https://claude.ai/code)** (Anthropic's AI coding assistant), by a researcher who works with lasers and photonics but is not a professional software developer.
 
-The development process looked like this: I described what I needed ("implement Boyd-Kleinman focusing theory", "add a cavity eigenmode solver", "connect the OPO threshold calculation to the cavity mode output"), and Claude handled all implementation — JavaScript physics engines, UI panels, ABCD matrix propagation, Sellmeier equations, the MCP server protocol. I provided direction; Claude provided the code and the physics.
+I am not familiar with optics. Someone needed a tool like this, so I tried to build it with Claude's help — Claude provided the physics, the formulas, the references, and all the code. I mostly asked questions, described what was needed, and checked the outputs against a few reference cases I could find online.
 
-**I am not a photonics expert.** I work adjacent to laser systems but I do not have a deep background in nonlinear optics or cavity design. The physics formulas, the choice of Sellmeier references, the Boyd-Kleinman focusing theory, the OPO threshold derivation — all of this came from Claude. I prompted, reviewed, asked follow-up questions, and tested the outputs against reference cases I could find online. But I cannot independently derive or verify the underlying equations.
-
-This matters for how you should use this tool:
-
-- The physics is referenced to published literature (Kato 1986/1994, Boyd & Kleinman 1968, Armstrong et al. 1962, Gayer 2008) — Claude cited sources and I included them in the code
-- Results have been spot-checked against a small number of reference cases (see [Physics Validation](#physics-validation))
-- **I cannot guarantee there are no physics errors.** If you are a photonics researcher and something looks wrong, it may well be wrong — please open an issue
-- The limitations I describe are the ones Claude identified and explained to me; there may be others I'm not aware of
+**If you plan to use the results for real work, please verify them yourself.** The physics is referenced to published literature (Kato 1986/1994, Boyd & Kleinman 1968, Armstrong et al. 1962, Gayer 2008), and a few spot-checks pass (see [Physics Validation](#physics-validation)), but I cannot independently verify the underlying equations. If something looks wrong, it may well be — please open an issue.
 
 Development was done in June 2026, across multiple Claude Code sessions. The entire codebase — ~3000 lines of physics JS, ~2000 lines of UI — was written by Claude from scratch.
 
