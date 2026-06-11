@@ -2,7 +2,9 @@
 
 This document is for people who want to understand, modify, or extend the codebase.
 
-> **Development context:** This project was built through conversational sessions with [Claude Code](https://claude.ai/code). If you're reading this because you want to contribute or fix something, welcome. The code is intentionally structured to be readable — each physics layer is in its own file with a clear, minimal API.
+> **Development context:** This project was built through conversational sessions with [Claude Code](https://claude.ai/code) by someone who is not familiar with optics — someone needed the tool so they tried to build it. The physics formulas, references, and all code came from Claude. If you're reading this because you want to contribute or fix something, welcome. The code is intentionally structured to be readable — each physics layer is in its own file with a clear, minimal API.
+
+**Last updated:** 2026-06-11 — Disclaimer added to `index.html`; personal path removed from `mcp-server.js` comment (replaced with `/path/to/PhotonicsSim/`).
 
 ---
 

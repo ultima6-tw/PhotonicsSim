@@ -4,7 +4,7 @@
 // Claude Code config (add to ~/.claude/settings.json → mcpServers):
 //   "photonics": {
 //     "command": "node",
-//     "args": ["/Users/yclin/Documents/Claude/Projects/PhotonicsSim/mcp-server.js"]
+//     "args": ["/path/to/PhotonicsSim/mcp-server.js"]
 //   }
 
 const fs       = require('fs');
