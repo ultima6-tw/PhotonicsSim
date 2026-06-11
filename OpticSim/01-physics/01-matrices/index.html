@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>01-matrices test</title>
+<style>
+  body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 2rem; }
+  h2 { color: #7ec8e3; margin-top: 2rem; }
+  .pass { color: #7ed87e; }
+  .fail { color: #e37e7e; }
+  pre { background: #2a2a2a; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+  table { border-collapse: collapse; margin: 0.5rem 0; }
+  td, th { padding: 4px 12px; border: 1px solid #444; text-align: right; }
+  th { color: #7ec8e3; }
+</style>
+</head>
+<body>
+<h1>01-matrices — ABCD Matrix Engine Test</h1>
+<div id="output"></div>
+
+<script src="matrices.js"></script>
+<script>
+const out = document.getElementById('output');
+const results = [];
+
+function assert(label, got, expected, tol = 1e-9) {
+  const pass = Math.abs(got - expected) < tol;
+  results.push({ label, got, expected, pass });
+  return pass;
+}
+
+function section(title) {
+  out.innerHTML += `<h2>${title}</h2>`;
+}
+
+function render() {
+  let html = '<table><tr><th>Test</th><th>Expected</th><th>Got</th><th>Result</th></tr>';
+  for (const r of results) {
+    const cls = r.pass ? 'pass' : 'fail';
+    html += `<tr>
+      <td style="text-align:left">${r.label}</td>
+      <td>${r.expected.toExponential(4)}</td>
+      <td>${r.got.toExponential(4)}</td>
+      <td class="${cls}">${r.pass ? '✓' : '✗'}</td>
+    </tr>`;
+  }
+  html += '</table>';
+  const total = results.length, passed = results.filter(r => r.pass).length;
+  html += `<p class="${passed===total?'pass':'fail'}">${passed}/${total} passed</p>`;
+  out.innerHTML += html;
+  results.length = 0;
+}
+
+// ── 1. Identity checks ────────────────────────────────────────────────
+section('1. Identity / Trivial');
+{
+  const id = M.free(0);
+  assert('free(0) a=1', id[0], 1);
+  assert('free(0) b=0', id[1], 0);
+  assert('free(0) c=0', id[2], 0);
+  assert('free(0) d=1', id[3], 1);
+
+  // Flat mirror = identity (unfolded)
+  const fm = M.mirror(Infinity);
+  assert('flat mirror a=1', fm[0], 1);
+  assert('flat mirror c=0', fm[2], 0);
+}
+render();
+
+// ── 2. Free space ─────────────────────────────────────────────────────
+section('2. Free Space Propagation');
+{
+  // A ray at r=1, theta=0 propagates to r=1+d*0=1... wait, theta=0.1
+  const [r2, t2] = M.applyRay(M.free(0.5), 1.0, 0.1);
+  assert('free: r_out = r + d*theta', r2, 1.0 + 0.5 * 0.1);
+  assert('free: theta unchanged',     t2, 0.1);
+}
+render();
+
+// ── 3. Thin lens focal properties ────────────────────────────────────
+section('3. Thin Lens');
+{
+  const f = 0.2;
+  // Parallel ray at h=1 should converge to axis at distance f
+  // After lens: theta = -h/f  →  after free(f): r = h + f*(-h/f) = 0
+  const afterLens = M.applyRay(M.lens(f), 1.0, 0.0);
+  const [rFocus, _] = M.applyRay(M.free(f), afterLens[0], afterLens[1]);
+  assert('parallel ray hits axis at focal point', rFocus, 0.0, 1e-12);
+
+  // System matrix of lens(f) + free(f) should have b=f, c=-1/f
+  const sys = M.mul(M.free(f), M.lens(f));
+  assert('lens+free: a=0', sys[0], 0.0, 1e-12);
+  assert('lens+free: b=f', sys[1], f);
+  assert('lens+free: c=-1/f', sys[2], -1/f);
+}
+render();
+
+// ── 4. Spherical mirror ───────────────────────────────────────────────
+section('4. Spherical Mirror (unfolded)');
+{
+  const R = 1.0; // R=1m concave → f_equiv = R/2 = 0.5m
+  const fEq = R / 2;
+  const mirMat = M.mirror(R);
+  assert('mirror c = -2/R', mirMat[2], -2/R);
+  // Parallel ray focuses at R/2
+  const afterMir = M.applyRay(mirMat, 1.0, 0.0);
+  const [rFoc] = M.applyRay(M.free(fEq), afterMir[0], afterMir[1]);
+  assert('concave mirror focuses at R/2', rFoc, 0.0, 1e-12);
+}
+render();
+
+// ── 5. Matrix composition ─────────────────────────────────────────────
+section('5. Matrix Composition');
+{
+  // 4f system: lens(f) - free(2f) - lens(f)
+  // Should have a=-1, b=0, c=0, d=-1 (inverting telescope)
+  const f = 0.3;
+  const sys = M.compose([M.lens(f), M.free(2*f), M.lens(f)]);
+  // 4f matrix: [[-1, 2f], [0, -1]] — inverting telescope, b=2f (not 0)
+  assert('4f: a=-1', sys[0], -1,    1e-10);
+  assert('4f: b=2f', sys[1],  2*f,  1e-10);
+  assert('4f: c=0',  sys[2],  0,    1e-10);
+  assert('4f: d=-1', sys[3], -1,    1e-10);
+}
+render();
+
+// ── 6. Interface (Snell paraxial) ─────────────────────────────────────
+section('6. Flat Interface');
+{
+  // Air→glass n=1.5: angle reduces
+  const mat = M.interface(1.0, 1.5);
+  assert('interface d = n1/n2', mat[3], 1/1.5);
+  const [, tOut] = M.applyRay(mat, 0, 0.3);
+  assert('angle reduced by n1/n2', tOut, 0.3 / 1.5);
+}
+render();
+
+// ── 7. Gaussian q-parameter ───────────────────────────────────────────
+section('7. Gaussian Beam q-parameter');
+{
+  const lambda = 1064e-9;
+  const w0 = 1e-3;          // 1 mm waist
+  // At waist: q = i * pi * w0^2 / lambda
+  const zR = Math.PI * w0 * w0 / lambda;  // Rayleigh range
+  const q0 = { r: 0, i: zR };
+
+  // After free space d=zR, beam should double: w = w0*sqrt(2)
+  const q1 = M.applyQ(M.free(zR), q0);
+  // w(z)^2 = -lambda / (pi * Im(1/q))
+  // 1/q: let q=qr+i*qi, 1/q = (qr - i*qi)/(qr^2+qi^2)
+  function beamRadius(q, lam) {
+    const denom = q.r*q.r + q.i*q.i;
+    const invQi = -q.i / denom;   // Im(1/q)
+    return Math.sqrt(-lam / (Math.PI * invQi));
+  }
+  const w1 = beamRadius(q1, lambda);
+  assert('w at z=zR equals w0*sqrt(2)', w1, w0 * Math.sqrt(2), 1e-9);
+
+  // After free(zR) from waist, real part of q = zR (distance from waist)
+  assert('q.r after free(zR) = zR', q1.r, zR, 1e-9);
+
+  // q.i should be preserved (imaginary part of q at waist = zR)
+  assert('q.i preserved through free space', q1.i, zR, 1e-9);
+}
+render();
+
+// ── 8. Element factory labels ─────────────────────────────────────────
+section('8. Element Factory');
+{
+  const el = Element.lens(0.2);
+  assert('Element.lens matrix c = -1/f', el.matrix[2], -1/0.2);
+
+  const em = Element.mirror(Infinity);
+  assert('Element.mirror(Inf) = flat = identity c=0', em.matrix[2], 0);
+
+  // Compose via Element list
+  const system = [Element.free(0.5), Element.lens(0.2), Element.free(0.2)];
+  const sysM = M.compose(system.map(e => e.matrix));
+  // Parallel ray (r=1, θ=0) should land on axis after lens+free(f)
+  const [rOut] = M.applyRay(sysM, 1.0, 0.0);
+  assert('lens system focuses parallel ray', rOut, 0.0, 1e-12);
+}
+render();
+
+// ── Summary ───────────────────────────────────────────────────────────
+const allResults = document.querySelectorAll('.pass, .fail');
+</script>
+</body>
+</html>

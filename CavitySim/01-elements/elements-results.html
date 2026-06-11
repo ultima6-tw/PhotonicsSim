@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CavitySim Phase 1 — Element ABCD Matrices</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; font-weight: bold; }
+  .val  { color: #d29922; }
+  .sep  { color: #555; font-style: italic; font-size: 11px; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 12px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>CavitySim Phase 1 — Element ABCD Matrices</h1>
+<p>Verifies: <code>elements.js</code> — ABCD matrices for all element types,
+   matrix operations, and determinant conservation.</p>
+
+<h2>1. Individual Element Matrices</h2>
+<table id="t1">
+<tr><th>#</th><th>Element</th><th>Entry</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>2. Determinant = 1 (Lossless Conservation)</h2>
+<table id="t2">
+<tr><th>#</th><th>Element</th><th>det(M)</th><th>Expected</th><th>Result</th></tr>
+</table>
+
+<h2>3. Matrix Composition — Beam through ThinLens then FreeSpace</h2>
+<p>matChain([ThinLens(f=100mm), FreeSpace(L=50mm)]) → M = M_free × M_lens</p>
+<table id="t3">
+<tr><th>#</th><th>Entry</th><th>Formula</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>4. CurvedMirror ≡ ThinLens(f = R/2)</h2>
+<p>A curved mirror with ROC R is equivalent to a thin lens with f = R/2.</p>
+<table id="t4">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="elements.js"></script>
+<script>
+let passed = 0, failed = 0, n = 0;
+
+function addRow(tid, cells, ok) {
+  n++;
+  const tr = document.createElement('tr');
+  cells.forEach((c, i) => {
+    const td = document.createElement('td');
+    td.textContent = (i === 0) ? n : c;
+    if (i === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+    else if (i === 3 || i === 4) td.className = 'val';
+    tr.appendChild(td);
+  });
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function sep(tid, label) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = 6;
+  td.className = 'sep';
+  td.textContent = `── ${label} ──`;
+  tr.appendChild(td);
+  document.getElementById(tid).appendChild(tr);
+}
+
+function near(a, b, tol = 1e-10) { return Math.abs(a - b) <= tol; }
+function fmt(v) { return typeof v === 'number' ? v.toPrecision(6) : String(v); }
+
+// ── Section 1: Individual elements ───────────────────────────────────────────
+
+sep('t1', 'FreeSpace(L=100mm)');
+const fs = makeElement('freeSpace', { L_m: 0.1 });
+addRow('t1', ['FreeSpace', 'M[0][0]', '1',   fmt(fs.M[0][0]), near(fs.M[0][0], 1)], near(fs.M[0][0], 1));
+addRow('t1', ['FreeSpace', 'M[0][1]', '0.1', fmt(fs.M[0][1]), near(fs.M[0][1], 0.1)], near(fs.M[0][1], 0.1));
+addRow('t1', ['FreeSpace', 'M[1][0]', '0',   fmt(fs.M[1][0]), near(fs.M[1][0], 0)], near(fs.M[1][0], 0));
+addRow('t1', ['FreeSpace', 'M[1][1]', '1',   fmt(fs.M[1][1]), near(fs.M[1][1], 1)], near(fs.M[1][1], 1));
+
+sep('t1', 'ThinLens(f=50mm)');
+const lens = makeElement('thinLens', { f_m: 0.05 });
+addRow('t1', ['ThinLens', 'M[0][0]', '1',   fmt(lens.M[0][0]), near(lens.M[0][0], 1)], near(lens.M[0][0], 1));
+addRow('t1', ['ThinLens', 'M[0][1]', '0',   fmt(lens.M[0][1]), near(lens.M[0][1], 0)], near(lens.M[0][1], 0));
+addRow('t1', ['ThinLens', 'M[1][0]', '-20', fmt(lens.M[1][0]), near(lens.M[1][0], -20)], near(lens.M[1][0], -20));
+addRow('t1', ['ThinLens', 'M[1][1]', '1',   fmt(lens.M[1][1]), near(lens.M[1][1], 1)], near(lens.M[1][1], 1));
+
+sep('t1', 'FlatMirror');
+const flat = makeElement('flatMirror');
+addRow('t1', ['FlatMirror', 'M = identity', '[[1,0],[0,1]]',
+  JSON.stringify(flat.M), JSON.stringify(flat.M) === '[[1,0],[0,1]]'],
+  JSON.stringify(flat.M) === '[[1,0],[0,1]]');
+
+sep('t1', 'CurvedMirror(R=200mm)');
+const cmirr = makeElement('curvedMirror', { R_m: 0.2 });
+addRow('t1', ['CurvedMirror', 'M[1][0] = -2/R', '-10', fmt(cmirr.M[1][0]), near(cmirr.M[1][0], -10)], near(cmirr.M[1][0], -10));
+addRow('t1', ['CurvedMirror', 'M[0][0]', '1',  fmt(cmirr.M[0][0]), near(cmirr.M[0][0], 1)], near(cmirr.M[0][0], 1));
+addRow('t1', ['CurvedMirror', 'M[0][1]', '0',  fmt(cmirr.M[0][1]), near(cmirr.M[0][1], 0)], near(cmirr.M[0][1], 0));
+addRow('t1', ['CurvedMirror', 'M[1][1]', '1',  fmt(cmirr.M[1][1]), near(cmirr.M[1][1], 1)], near(cmirr.M[1][1], 1));
+
+sep('t1', 'GainMedium(n=1.76, t=10mm)');
+const gm = makeElement('gainMedium', { n: 1.76, t_m: 0.01 });
+const expected_gm_01 = 0.01 / 1.76;
+addRow('t1', ['GainMedium', 'M[0][1] = t/n', fmt(expected_gm_01), fmt(gm.M[0][1]),
+  near(gm.M[0][1], expected_gm_01, 1e-12)], near(gm.M[0][1], expected_gm_01, 1e-12));
+addRow('t1', ['GainMedium', 'M[1][0]', '0', fmt(gm.M[1][0]), near(gm.M[1][0], 0)], near(gm.M[1][0], 0));
+
+// ── Section 2: Determinant = 1 ────────────────────────────────────────────────
+
+const det_cases = [
+  ['FreeSpace(100mm)',      makeElement('freeSpace',    { L_m: 0.1 })],
+  ['ThinLens(f=50mm)',      makeElement('thinLens',     { f_m: 0.05 })],
+  ['FlatMirror',            makeElement('flatMirror')],
+  ['CurvedMirror(R=200mm)', makeElement('curvedMirror', { R_m: 0.2 })],
+  ['GainMedium(n=1.76, t=10mm)', makeElement('gainMedium', { n: 1.76, t_m: 0.01 })],
+  ['ThinLens(f=-80mm)',     makeElement('thinLens',     { f_m: -0.08 })],
+];
+for (const [label, el] of det_cases) {
+  const d = matDet(el.M);
+  const ok = near(d, 1, 1e-12);
+  const tr = document.createElement('tr');
+  n++;
+  tr.innerHTML = `<td>${n}</td><td>${label}</td><td class="val">${fmt(d)}</td><td class="val">1</td><td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+  document.getElementById('t2').appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+// ── Section 3: Composition — ThinLens then FreeSpace ─────────────────────────
+
+const f_comp = 0.1;   // 100 mm
+const L_comp = 0.05;  // 50 mm
+const lens_comp = makeElement('thinLens',  { f_m: f_comp });
+const free_comp = makeElement('freeSpace', { L_m: L_comp });
+const M_chain = matChain([lens_comp, free_comp]);  // physical: lens first, then free
+
+// M_chain = M_free × M_lens = [[1-L/f, L], [-1/f, 1]]
+const exp_00 = 1 - L_comp / f_comp;  // 0.5
+const exp_01 = L_comp;               // 0.05
+const exp_10 = -1 / f_comp;         // -10
+const exp_11 = 1;
+
+addRow('t3', ['M[0][0]', '1 − L/f', fmt(exp_00), fmt(M_chain[0][0]), near(M_chain[0][0], exp_00)], near(M_chain[0][0], exp_00));
+addRow('t3', ['M[0][1]', 'L',       fmt(exp_01), fmt(M_chain[0][1]), near(M_chain[0][1], exp_01)], near(M_chain[0][1], exp_01));
+addRow('t3', ['M[1][0]', '−1/f',    fmt(exp_10), fmt(M_chain[1][0]), near(M_chain[1][0], exp_10)], near(M_chain[1][0], exp_10));
+addRow('t3', ['M[1][1]', '1',       fmt(exp_11), fmt(M_chain[1][1]), near(M_chain[1][1], exp_11)], near(M_chain[1][1], exp_11));
+
+// Determinant of composed matrix = 1
+const det_chain = matDet(M_chain);
+addRow('t3', ['det(M_chain)', '1', fmt(det_chain), fmt(det_chain), near(det_chain, 1)], near(det_chain, 1));
+
+// ── Section 4: CurvedMirror ≡ ThinLens(f=R/2) ────────────────────────────────
+
+const R_test = 0.15;  // 150 mm
+const mirror_eq = makeElement('curvedMirror', { R_m: R_test });
+const lens_eq   = makeElement('thinLens',     { f_m: R_test / 2 });
+
+const m00_ok = near(mirror_eq.M[0][0], lens_eq.M[0][0]);
+const m01_ok = near(mirror_eq.M[0][1], lens_eq.M[0][1]);
+const m10_ok = near(mirror_eq.M[1][0], lens_eq.M[1][0]);
+const m11_ok = near(mirror_eq.M[1][1], lens_eq.M[1][1]);
+
+addRow('t4', ['CurvedMirror(R=150mm) vs ThinLens(f=75mm)', 'M[0][0]',
+  fmt(lens_eq.M[0][0]), fmt(mirror_eq.M[0][0]), m00_ok ? 'PASS' : 'FAIL'], m00_ok);
+addRow('t4', ['CurvedMirror(R=150mm) vs ThinLens(f=75mm)', 'M[0][1]',
+  fmt(lens_eq.M[0][1]), fmt(mirror_eq.M[0][1]), m01_ok ? 'PASS' : 'FAIL'], m01_ok);
+addRow('t4', ['CurvedMirror(R=150mm) vs ThinLens(f=75mm)', 'M[1][0]',
+  fmt(lens_eq.M[1][0]), fmt(mirror_eq.M[1][0]), m10_ok ? 'PASS' : 'FAIL'], m10_ok);
+addRow('t4', ['CurvedMirror(R=150mm) vs ThinLens(f=75mm)', 'M[1][1]',
+  fmt(lens_eq.M[1][1]), fmt(mirror_eq.M[1][1]), m11_ok ? 'PASS' : 'FAIL'], m11_ok);
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+const total = passed + failed;
+const sumEl = document.getElementById('summary');
+sumEl.textContent = `${passed}/${total} PASS${failed === 0 ? ' ✓ Phase 1 COMPLETE' : ` — ${failed} FAILED`}`;
+sumEl.style.color = failed === 0 ? '#3fb950' : '#f85149';
+</script>
+</body>
+</html>

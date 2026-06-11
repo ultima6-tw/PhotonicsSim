@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 2 — ne(θ) + Δk Verification</title>
+<style>
+  body  { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.4rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.6rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 12px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 12px 2px 0; }
+  .pass { color:#40cc70; } .fail { color:#e05050; }
+  .val  { color:#b0d0e8; }
+  .note { color:#3a6050; font-size:0.7rem; }
+  canvas { display:block; margin:0.5rem 0 1rem; border:1px solid #1a3a2a; }
+  #summary { margin-top:1rem; font-size:0.82rem; }
+</style>
+</head>
+<body>
+<h1>Phase 2 — ne(θ) + Δk Verification</h1>
+<p class="note">Verifies ne(θ) index ellipsoid formula and phase-matching angle solver for uniaxial crystals</p>
+
+<!-- Crystal DB -->
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<!-- Physics -->
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+
+<script>
+const DEG = Math.PI / 180;
+let pass = 0, fail = 0;
+
+function check(label, computed, expected, tol, unit='') {
+  const delta = Math.abs(computed - expected);
+  const ok = isFinite(computed) && delta <= tol;
+  ok ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="val">${isFinite(computed) ? computed.toFixed(4) : 'ERR'} ${unit}</td>
+    <td class="val">${expected.toFixed(4)} ${unit}</td>
+    <td class="${ok ? 'pass' : 'fail'}">${isFinite(computed) ? delta.toFixed(4) : '—'}</td>
+    <td class="${ok ? 'pass' : 'fail'}">${ok ? '✓' : '✗'}</td>
+  </tr>`;
+}
+
+function tableHdr() {
+  return `<tr><th>Check</th><th>Computed</th><th>Expected</th><th>Δ</th><th>Result</th></tr>`;
+}
+
+// ── 1. ne(θ) spot checks ───────────────────────────────────────────────────
+const h2_ne = document.createElement('h2');
+h2_ne.textContent = 'ne(θ) Index Ellipsoid';
+document.body.appendChild(h2_ne);
+
+const tbl1 = document.createElement('table');
+tbl1.innerHTML = tableHdr();
+
+// At θ=0: ne(0) = no (fundamental property of uniaxial crystal)
+tbl1.innerHTML += check('BBO ne(θ=0°, 532nm) = no(532nm)',
+  neEff(0, 532e-9, BBO), BBO.n(532e-9, 'o'), 1e-6);
+
+// At θ=90°: ne(90°) = ne_principal
+tbl1.innerHTML += check('BBO ne(θ=90°, 532nm) = ne_principal',
+  neEff(90*DEG, 532e-9, BBO), BBO.n(532e-9, 'e'), 1e-6);
+
+// Type-I SHG condition: ne(θ_pm, λ_SH) = no(λ_F)
+// BBO 1064→532nm: θ_pm ≈ 22.8°, verify ne value at that angle
+tbl1.innerHTML += check('BBO ne(22.8°, 532nm) ≈ no(1064nm)  [Type-I SHG condition]',
+  neEff(22.8*DEG, 532e-9, BBO), BBO.n(1064e-9, 'o'), 2e-4);
+
+// KDP 1064→532nm: Nikogosyan 2005 gives θ_pm ≈ 30.3° (historical 41° is from 1960s Sellmeier)
+// Verify that ne_eff at the SOLVER's angle equals no(1064nm)
+const kdp_theta_pm_approx = 30.3 * DEG;
+tbl1.innerHTML += check('KDP ne(30.3°, 532nm) ≈ no(1064nm)  [Nikogosyan 2005 PM angle]',
+  neEff(kdp_theta_pm_approx, 532e-9, KDP), KDP.n(1064e-9, 'o'), 2e-3);
+
+// Biaxial XZ convention (θ from Z axis):
+//   θ=0° → propagating along Z, X-polarized → sees nx
+//   θ=90° → propagating along X, Z-polarized → sees nz
+tbl1.innerHTML += check('KTP ne_xz(θ=0°, 1064nm) = nx(1064nm)  [along Z, X-pol]',
+  neEff_biaxial_xz(0, 1064e-9, KTP), KTP.n(1064e-9, 'x'), 1e-6);
+
+tbl1.innerHTML += check('KTP ne_xz(θ=90°, 1064nm) = nz(1064nm)  [along X, Z-pol]',
+  neEff_biaxial_xz(90*DEG, 1064e-9, KTP), KTP.n(1064e-9, 'z'), 1e-6);
+
+document.body.appendChild(tbl1);
+
+// ── 2. Δk spot checks ─────────────────────────────────────────────────────
+const h2_dk = document.createElement('h2');
+h2_dk.textContent = 'Δk at Known Phase-Matching Angles';
+document.body.appendChild(h2_dk);
+
+const tbl2 = document.createElement('table');
+tbl2.innerHTML = tableHdr();
+
+// Δk should be ≈0 at phase-matching angle
+const dk_bbo_1064 = deltaK_typeI(22.8*DEG, 1064e-9, BBO);
+tbl2.innerHTML += check('Δk Type-I BBO 1064nm @ θ=22.8° ≈ 0',
+  dk_bbo_1064, 0, 5e3, 'rad/m');  // ±5000 rad/m tolerance (< 0.01° error)
+
+const dk_bbo_800 = deltaK_typeI(29.2*DEG, 800e-9, BBO);
+tbl2.innerHTML += check('Δk Type-I BBO 800nm  @ θ=29.2° ≈ 0',
+  dk_bbo_800, 0, 1e4, 'rad/m');
+
+const dk_kdp_1064 = deltaK_typeI(30.3*DEG, 1064e-9, KDP);
+tbl2.innerHTML += check('Δk Type-I KDP 1064nm @ θ=30.3° ≈ 0  [Nikogosyan 2005]',
+  dk_kdp_1064, 0, 2e4, 'rad/m');
+
+document.body.appendChild(tbl2);
+
+// ── 3. Phase-matching angle solver ────────────────────────────────────────
+const h2_pm = document.createElement('h2');
+h2_pm.textContent = 'Phase-Matching Angle Solver';
+document.body.appendChild(h2_pm);
+
+const tbl3 = document.createElement('table');
+tbl3.innerHTML = tableHdr();
+
+const theta_bbo_1064 = SHG_typeI_angle(1064e-9, BBO);
+tbl3.innerHTML += check('BBO Type-I SHG 1064nm → θ_pm (°)',
+  theta_bbo_1064 / DEG, 22.8, 0.3, '°');
+
+const theta_bbo_800 = SHG_typeI_angle(800e-9, BBO);
+tbl3.innerHTML += check('BBO Type-I SHG 800nm  → θ_pm (°)',
+  theta_bbo_800 / DEG, 29.2, 0.5, '°');
+
+const theta_kdp_1064 = SHG_typeI_angle(1064e-9, KDP);
+tbl3.innerHTML += check('KDP Type-I SHG 1064nm → θ_pm (°)  [Nikogosyan 2005; hist. 41°]',
+  theta_kdp_1064 / DEG, 30.3, 0.5, '°');
+
+const theta_bbo_532 = SHG_typeI_angle(532e-9, BBO);
+tbl3.innerHTML += check('BBO Type-I SHG 532→266nm → θ_pm (°)',
+  theta_bbo_532 / DEG, 47.5, 1.0, '°');
+
+document.body.appendChild(tbl3);
+
+// ── 4. Summary ────────────────────────────────────────────────────────────
+const sdiv = document.createElement('div');
+sdiv.id = 'summary';
+sdiv.innerHTML =
+  `<span class="pass">✓ ${pass} passed</span>  ` +
+  `<span class="${fail ? 'fail' : 'note'}">${fail ? '✗ ' + fail + ' failed' : ''}</span>`;
+document.body.appendChild(sdiv);
+
+// ── 5. ne(θ) curves (canvas) ──────────────────────────────────────────────
+const h2_plot = document.createElement('h2');
+h2_plot.textContent = 'ne(θ) Curves — BBO & KDP at 532nm';
+document.body.appendChild(h2_plot);
+
+const cv = document.createElement('canvas');
+cv.width = 640; cv.height = 240;
+document.body.appendChild(cv);
+const ctx = cv.getContext('2d');
+
+ctx.fillStyle = '#0d1117';
+ctx.fillRect(0, 0, cv.width, cv.height);
+
+function plotCurve(crystal, lambda, axis, color, label, ymin, yrange) {
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  const steps = 360;
+  for (let i = 0; i <= steps; i++) {
+    const theta = (i / steps) * (Math.PI / 2);
+    const n = (axis === 'uniaxial') ? neEff(theta, lambda, crystal) : neEff_biaxial_xz(theta, lambda, crystal);
+    const x = 20 + (i / steps) * (cv.width - 40);
+    const y = cv.height - 20 - ((n - ymin) / yrange) * (cv.height - 40);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Label
+  ctx.fillStyle = color;
+  ctx.font = '10px monospace';
+  const n90 = (axis === 'uniaxial') ? neEff(Math.PI/2, lambda, crystal) : neEff_biaxial_xz(Math.PI/2, lambda, crystal);
+  const ly = cv.height - 20 - ((n90 - ymin) / yrange) * (cv.height - 40) - 5;
+  ctx.fillText(label, cv.width - 120, ly);
+}
+
+// Axis
+ctx.strokeStyle = '#1a3a2a'; ctx.lineWidth = 1;
+ctx.beginPath(); ctx.moveTo(20, cv.height-20); ctx.lineTo(cv.width-20, cv.height-20); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(20, 10); ctx.lineTo(20, cv.height-20); ctx.stroke();
+
+// Grid lines for θ=0°,30°,60°,90°
+[0, 30, 60, 90].forEach(deg => {
+  const x = 20 + (deg/90) * (cv.width-40);
+  ctx.strokeStyle = '#1a2a2a'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(x, 10); ctx.lineTo(x, cv.height-20); ctx.stroke();
+  ctx.fillStyle = '#3a5a5a'; ctx.font = '9px monospace';
+  ctx.fillText(deg+'°', x-8, cv.height-6);
+});
+
+const ymin = 1.50, yrange = 0.25;
+
+// Horizontal reference: no(BBO,1064nm)
+const no_bbo_1064 = BBO.n(1064e-9, 'o');
+ctx.strokeStyle = '#4a6040'; ctx.setLineDash([3,3]);
+const yref = cv.height-20 - ((no_bbo_1064-ymin)/yrange)*(cv.height-40);
+ctx.beginPath(); ctx.moveTo(20,yref); ctx.lineTo(cv.width-20,yref); ctx.stroke();
+ctx.setLineDash([]);
+ctx.fillStyle = '#4a6040'; ctx.font = '9px monospace';
+ctx.fillText('no(BBO,1064)='+no_bbo_1064.toFixed(4), cv.width-175, yref-3);
+
+plotCurve(BBO, 532e-9, 'uniaxial', '#40aacc', 'ne(BBO,532nm)', ymin, yrange);
+plotCurve(KDP, 532e-9, 'uniaxial', '#cc8840', 'ne(KDP,532nm)', ymin, yrange);
+
+// Mark phase-matching angles
+if (theta_bbo_1064) {
+  const xm = 20 + (theta_bbo_1064/(Math.PI/2))*(cv.width-40);
+  ctx.strokeStyle='#40cc70'; ctx.lineWidth=1; ctx.setLineDash([2,2]);
+  ctx.beginPath(); ctx.moveTo(xm,10); ctx.lineTo(xm,cv.height-20); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#40cc70'; ctx.font='9px monospace';
+  ctx.fillText('θ_pm='+( theta_bbo_1064/DEG).toFixed(1)+'°', xm+3, 20);
+}
+</script>
+</body>
+</html>

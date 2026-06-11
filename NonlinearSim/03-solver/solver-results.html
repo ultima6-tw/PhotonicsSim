@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 7 — Solver API Verification</title>
+<style>
+  body  { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.4rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.6rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 12px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 12px 2px 0; }
+  .pass { color:#40cc70; } .fail { color:#e05050; }
+  .val  { color:#b0d0e8; } .note { color:#3a6050; font-size:0.7rem; }
+  #summary { margin-top:1rem; font-size:0.82rem; }
+</style>
+</head>
+<body>
+<h1>Phase 7 — Solver API Verification</h1>
+<p class="note">NL namespace: getSHGAngle, getSHG_PPLN, getTuningCurve, getAcceptance, findCombinations, toOpticSimWavelengths, toOpticSimElement</p>
+
+<!-- dependencies -->
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="../02-physics/sellmeier.js"></script>
+<script src="../02-physics/phase-match.js"></script>
+<script src="../02-physics/opo-tuning.js"></script>
+<script src="../02-physics/ppln-qpm.js"></script>
+<script src="../02-physics/bk-focus.js"></script>
+<script src="../02-physics/efficiency.js"></script>
+<script src="../02-physics/deff.js"></script>
+<script src="../02-physics/gvd.js"></script>
+<script src="solver.js"></script>
+
+<script>
+let pass = 0, fail = 0;
+const rows = {};
+
+function ok(section, label, condition, got) {
+  condition ? pass++ : fail++;
+  const gotStr = got !== undefined ? `  <span class="note">→ ${JSON.stringify(got)}</span>` : '';
+  if (!rows[section]) rows[section] = '';
+  rows[section] += `<tr>
+    <td class="val">${label}</td>
+    <td class="${condition?'pass':'fail'}">${condition?'✓':'✗'}${gotStr}</td>
+  </tr>`;
+}
+
+// ── 1. getSHGAngle ────────────────────────────────────────────────────────────
+{
+  const r = NL.getSHGAngle({ crystal:'bbo', pump_nm:1064, type:'I', L_mm:10, P_W:1, w0_um:50 });
+  ok(1, 'getSHGAngle returns object (not null/array)',
+     r && !Array.isArray(r) && typeof r === 'object');
+  ok(1, 'BBO type-I 1064nm: theta_pm_deg ∈ [21°, 25°]',
+     r && r.theta_pm_deg > 21 && r.theta_pm_deg < 25, r?.theta_pm_deg);
+  ok(1, 'match_type === "Type-I"',
+     r?.match_type === 'Type-I', r?.match_type);
+  ok(1, 'sh_nm = 532 (pump/2)',
+     r?.signal_nm === 532, r?.signal_nm);
+  ok(1, 'eta_pct > 0',
+     r?.eta_pct > 0, r?.eta_pct);
+  ok(1, 'bw_nm finite and > 0',
+     r && isFinite(r.bw_nm) && r.bw_nm > 0, r?.bw_nm);
+  ok(1, 'bw_mrad finite and > 0',
+     r && isFinite(r.bw_mrad) && r.bw_mrad > 0, r?.bw_mrad);
+  ok(1, 'walk_off_mrad finite and > 0',
+     r && isFinite(r.walk_off_mrad) && r.walk_off_mrad > 0, r?.walk_off_mrad);
+  ok(1, 'n_pump and n_sh defined',
+     r?.n_pump > 0 && r?.n_sh > 0);
+
+  // Both types (no type filter → array)
+  const both = NL.getSHGAngle({ crystal:'bbo', pump_nm:1064 });
+  ok(1, 'getSHGAngle (no type) returns array of 2 types',
+     Array.isArray(both) && both.length === 2, both?.length);
+
+  // Unknown crystal → null
+  const bad = NL.getSHGAngle({ crystal:'unobtanium', pump_nm:1064 });
+  ok(1, 'Unknown crystal returns null', bad === null);
+}
+
+// ── 2. getSHG_PPLN ────────────────────────────────────────────────────────────
+{
+  const r = NL.getSHG_PPLN({ pump_nm:1064, T_C:25, L_mm:10, P_W:1, w0_um:50 });
+  ok(2, 'getSHG_PPLN returns object', r && typeof r === 'object');
+  ok(2, 'crystal = "ppln"', r?.crystal === 'ppln', r?.crystal);
+  ok(2, 'match_type = "QPM"', r?.match_type === 'QPM', r?.match_type);
+  ok(2, 'period_um ≈ 6.73 µm (within 0.5)', r && Math.abs(r.period_um - 6.73) < 0.5, r?.period_um);
+  ok(2, 'eta_pct > 0.5% (PPLN highest efficiency)', r?.eta_pct > 0.5, r?.eta_pct);
+  ok(2, 'walk_off_mrad = 0 (QPM)', r?.walk_off_mrad === 0, r?.walk_off_mrad);
+  ok(2, 'n_pump ≈ 2.154 (Gayer 2008)', r && Math.abs(r.n_pump - 2.154) < 0.005, r?.n_pump);
+
+  // Temperature dependence: higher T → different period required
+  const r80 = NL.getSHG_PPLN({ pump_nm:1064, T_C:80 });
+  ok(2, 'T=80°C period differs from T=25°C',
+     r && r80 && Math.abs(r.period_um - r80.period_um) > 0.01, r80?.period_um);
+}
+
+// ── 3. getTuningCurve ─────────────────────────────────────────────────────────
+{
+  const curve = NL.getTuningCurve({ crystal:'bbo', type:'I', pump_nm:532, theta_min:20, theta_max:30 });
+  ok(3, 'getTuningCurve returns non-empty array', Array.isArray(curve) && curve.length > 0, curve?.length);
+
+  if (curve && curve.length > 0) {
+    const pt = curve[0];
+    ok(3, 'Each point has theta_deg field', 'theta_deg' in pt, pt?.theta_deg);
+    ok(3, 'Each point has lambda_s_nm field', 'lambda_s_nm' in pt, pt?.lambda_s_nm);
+    ok(3, 'Each point has lambda_i_nm field', 'lambda_i_nm' in pt, pt?.lambda_i_nm);
+    ok(3, 'lambda_s_nm > pump_nm (signal > pump for OPO)',
+       pt.lambda_s_nm > 532, pt?.lambda_s_nm);
+
+    // Energy conservation: 1/λ_s + 1/λ_i ≈ 1/λ_pump (within 0.5%)
+    const mid = curve[Math.floor(curve.length / 2)];
+    const expected = 1/532;
+    const actual   = 1/mid.lambda_s_nm + 1/mid.lambda_i_nm;
+    ok(3, 'Energy conservation: 1/λ_s + 1/λ_i ≈ 1/λ_pump (< 0.5% error)',
+       Math.abs(actual - expected) / expected < 0.005, (actual - expected).toExponential(2));
+  }
+
+  // BBO type-I 355nm tuning range
+  const uv = NL.getTuningCurve({ crystal:'bbo', type:'I', pump_nm:355, theta_min:21, theta_max:35 });
+  ok(3, 'BBO type-I 355nm OPO tuning curve non-empty', Array.isArray(uv) && uv.length > 0, uv?.length);
+}
+
+// ── 4. getAcceptance ──────────────────────────────────────────────────────────
+{
+  const r = NL.getAcceptance({ crystal:'bbo', theta_deg:22.8, pump_nm:1064, L_mm:10, type:'I' });
+  ok(4, 'getAcceptance returns object', r && typeof r === 'object');
+  ok(4, 'bw_nm finite and > 0',     r && isFinite(r.bw_nm) && r.bw_nm > 0, r?.bw_nm);
+  ok(4, 'bw_mrad finite and > 0',   r && isFinite(r.bw_mrad) && r.bw_mrad > 0, r?.bw_mrad);
+  ok(4, 'bw_nm ≈ 1.05 nm (within 40%)', r && Math.abs(r.bw_nm - 1.05) / 1.05 < 0.4, r?.bw_nm);
+  ok(4, 'walk_off_mrad > 0 (BBO has walk-off)', r?.walk_off_mrad > 0, r?.walk_off_mrad);
+
+  // Unknown crystal → null
+  const bad = NL.getAcceptance({ crystal:'zzz', theta_deg:22.8, pump_nm:1064 });
+  ok(4, 'Unknown crystal returns null', bad === null);
+}
+
+// ── 5. findCombinations (SHG: target = pump/2) ───────────────────────────────
+{
+  const res = NL.findCombinations({ target_nm:532, pump_nm:1064, tol_nm:5, L_mm:10, P_W:1, w0_um:50 });
+  ok(5, 'findCombinations returns {query, combinations}',
+     res && 'query' in res && 'combinations' in res);
+  ok(5, 'query.target_nm = 532', res?.query?.target_nm === 532);
+  ok(5, 'combinations is array with entries', Array.isArray(res?.combinations) && res.combinations.length > 0,
+     res?.combinations?.length);
+
+  if (res?.combinations) {
+    const hasBBO = res.combinations.some(c => c.crystal === 'bbo' && c.process === 'SHG');
+    const hasPPLN = res.combinations.some(c => c.crystal === 'ppln' && c.match_type === 'QPM');
+    ok(5, 'Includes BBO SHG combination', hasBBO);
+    ok(5, 'Includes PPLN QPM combination', hasPPLN);
+
+    // Sort: PPLN should have higher eta_pct than BBO
+    const ppln = res.combinations.find(c => c.crystal === 'ppln');
+    const bbo  = res.combinations.find(c => c.crystal === 'bbo' && c.match_type === 'Type-I');
+    ok(5, 'PPLN eta_pct > BBO eta_pct (efficiency ranking)',
+       ppln && bbo && ppln.eta_pct > bbo.eta_pct,
+       `ppln:${ppln?.eta_pct?.toFixed(4)}% bbo:${bbo?.eta_pct?.toFixed(4)}%`);
+
+    // Sorted descending by eta_pct
+    const etas = res.combinations.filter(c => c.eta_pct !== null).map(c => c.eta_pct);
+    const isSorted = etas.every((e, i) => i === 0 || e <= etas[i-1]);
+    ok(5, 'combinations sorted by eta_pct descending', isSorted);
+
+    // All result fields present
+    const req = ['crystal','crystal_label','process','match_type','pump_nm','signal_nm',
+                 'theta_pm_deg','period_um','T_C','deff_pmV','eta_pct','n_pump','n_sh'];
+    const first = res.combinations[0];
+    ok(5, 'All required result fields present', req.every(k => k in first));
+  }
+}
+
+// ── 6. toOpticSimWavelengths ──────────────────────────────────────────────────
+{
+  const shg = NL.getSHGAngle({ crystal:'bbo', pump_nm:1064, type:'I' });
+  const waves = NL.toOpticSimWavelengths(shg);
+  ok(6, 'toOpticSimWavelengths returns array', Array.isArray(waves), waves?.length);
+  ok(6, 'SHG: returns 2 wavelength entries', waves?.length === 2, waves?.length);
+
+  if (waves && waves.length >= 2) {
+    ok(6, 'pump entry has role="pump"', waves.some(w => w.role === 'pump'));
+    ok(6, 'sh entry has role="sh"',    waves.some(w => w.role === 'sh'));
+    const pump = waves.find(w => w.role === 'pump');
+    ok(6, 'pump lambda_m = 1064nm × 1e-9',
+       pump && Math.abs(pump.lambda_m - 1064e-9) < 1e-15, pump?.lambda_m);
+    ok(6, 'lambda_m = lambda_nm × 1e-9 consistency',
+       waves.every(w => Math.abs(w.lambda_m - w.lambda_nm * 1e-9) < 1e-20));
+  }
+
+  // OPO result
+  const curve = NL.getTuningCurve({ crystal:'bbo', type:'I', pump_nm:532, theta_min:22, theta_max:23 });
+  if (curve && curve.length > 0) {
+    const opoRes = {
+      process:'OPO', pump_nm:532, signal_nm:curve[0].lambda_s_nm, idler_nm:curve[0].lambda_i_nm
+    };
+    const opoWaves = NL.toOpticSimWavelengths(opoRes);
+    ok(6, 'OPO: returns 3 wavelength entries (pump+signal+idler)', opoWaves?.length === 3, opoWaves?.length);
+    ok(6, 'OPO: has signal role', opoWaves?.some(w => w.role === 'signal'));
+    ok(6, 'OPO: has idler role',  opoWaves?.some(w => w.role === 'idler'));
+  }
+
+  // null input → empty array
+  ok(6, 'null input returns []', JSON.stringify(NL.toOpticSimWavelengths(null)) === '[]');
+}
+
+// ── 7. toOpticSimElement ──────────────────────────────────────────────────────
+{
+  const shg = NL.getSHGAngle({ crystal:'bbo', pump_nm:1064, type:'I' });
+  const el = NL.toOpticSimElement(shg, 10);
+  ok(7, 'toOpticSimElement returns object', el && typeof el === 'object');
+  ok(7, 'type = "crystal"', el?.type === 'crystal', el?.type);
+  ok(7, 't = L_mm × 1e-3 (L=10mm → 0.01m)', el && Math.abs(el.t - 0.01) < 1e-15, el?.t);
+  ok(7, 'n = n_pump', el && typeof el.n === 'number' && el.n > 1, el?.n);
+  ok(7, 'material = crystal name', el && typeof el.material === 'string', el?.material);
+  ok(7, '_nlmeta present', el && typeof el._nlmeta === 'object');
+
+  if (el?._nlmeta) {
+    ok(7, '_nlmeta.crystal = "bbo"', el._nlmeta.crystal === 'bbo', el._nlmeta.crystal);
+    ok(7, '_nlmeta.process = "SHG"', el._nlmeta.process === 'SHG', el._nlmeta.process);
+    ok(7, '_nlmeta.match_type = "Type-I"', el._nlmeta.match_type === 'Type-I');
+    ok(7, '_nlmeta.pump_nm = 1064', el._nlmeta.pump_nm === 1064);
+    ok(7, '_nlmeta.eta_pct > 0', el._nlmeta.eta_pct > 0, el._nlmeta.eta_pct);
+  }
+
+  // null input → null
+  ok(7, 'null input returns null', NL.toOpticSimElement(null) === null);
+}
+
+// ── 8. getSHGAngle + findCombinations — biaxial crystals (Phase 10) ──────────
+{
+  // KTP Type-II XY
+  const ktp2 = NL.getSHGAngle({ crystal:'ktp', pump_nm:1064, type:'II' });
+  ok(8, 'KTP Type-II getSHGAngle returns non-null',
+     ktp2 !== null);
+  ok(8, 'KTP Type-II: not an array (single dominant solution)',
+     ktp2 && !Array.isArray(ktp2));
+  ok(8, 'KTP Type-II: theta_pm_deg ∈ [20°, 30°] (Kato94 ~24.8°)',
+     ktp2 && ktp2.theta_pm_deg >= 20 && ktp2.theta_pm_deg <= 30, ktp2?.theta_pm_deg);
+  ok(8, 'KTP Type-II: match_type = "Type-II"',
+     ktp2?.match_type === 'Type-II', ktp2?.match_type);
+  ok(8, 'KTP Type-II: plane = "XY"',
+     ktp2?.plane === 'XY', ktp2?.plane);
+  ok(8, 'KTP Type-II: eta_pct > 0 (efficiency computed)',
+     ktp2?.eta_pct > 0, ktp2?.eta_pct);
+  ok(8, 'KTP Type-II: n_pump in [1.7, 1.9]',
+     ktp2 && ktp2.n_pump > 1.7 && ktp2.n_pump < 1.9, ktp2?.n_pump);
+
+  // KTP Type-I: no solution
+  const ktp1 = NL.getSHGAngle({ crystal:'ktp', pump_nm:1064, type:'I' });
+  ok(8, 'KTP Type-I returns null (no XY Type-I solution)',
+     ktp1 === null, ktp1);
+
+  // LBO Type-I (should find XY + XZ solutions → array)
+  const lbo1 = NL.getSHGAngle({ crystal:'lbo', pump_nm:1064, type:'I' });
+  ok(8, 'LBO Type-I returns array (XY + XZ solutions)',
+     Array.isArray(lbo1), lbo1 ? (Array.isArray(lbo1) ? `[${lbo1.length}]` : typeof lbo1) : null);
+  ok(8, 'LBO Type-I XY SS→F: phi ∈ [5°, 20°] (noncritical)',
+     Array.isArray(lbo1) && lbo1.some(r => r.plane === 'XY' && r.theta_pm_deg >= 5 && r.theta_pm_deg <= 20),
+     lbo1?.map(r => `${r.plane} ${r.theta_pm_deg.toFixed(2)}°`));
+
+  // LBO all solutions (no type filter)
+  const lboAll = NL.getSHGAngle({ crystal:'lbo', pump_nm:1064 });
+  ok(8, 'LBO no-type-filter returns array with ≥2 solutions',
+     Array.isArray(lboAll) && lboAll.length >= 2, lboAll?.length);
+
+  // findCombinations SHG now includes KTP & LBO
+  const fc = NL.findCombinations({ target_nm:532, pump_nm:1064, L_mm:10, P_W:1 });
+  const ktpInFC = fc.combinations.some(c => c.crystal === 'ktp');
+  const lboInFC = fc.combinations.some(c => c.crystal === 'lbo');
+  const bboInFC = fc.combinations.some(c => c.crystal === 'bbo');
+  ok(8, 'findCombinations(532, 1064): KTP now included',
+     ktpInFC, fc.combinations.filter(c=>c.crystal==='ktp').map(c=>`${c.match_type} ${c.plane}`));
+  ok(8, 'findCombinations(532, 1064): LBO now included',
+     lboInFC, fc.combinations.filter(c=>c.crystal==='lbo').length);
+  ok(8, 'findCombinations(532, 1064): BBO regression still present',
+     bboInFC);
+  ok(8, 'KTP eta_pct in findCombinations > 0',
+     fc.combinations.filter(c=>c.crystal==='ktp').every(c=>c.eta_pct > 0));
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+const sections = [
+  { id:1, title:'NL.getSHGAngle — SHG Phase-Matching Angle' },
+  { id:2, title:'NL.getSHG_PPLN — PPLN QPM Parameters' },
+  { id:3, title:'NL.getTuningCurve — OPO Tuning Curve' },
+  { id:4, title:'NL.getAcceptance — Acceptance Bandwidth' },
+  { id:5, title:'NL.findCombinations — Crystal Search' },
+  { id:6, title:'NL.toOpticSimWavelengths — OpticSim Integration' },
+  { id:7, title:'NL.toOpticSimElement — Crystal Element Spec' },
+  { id:8, title:'Biaxial SHG (Phase 10) — KTP/LBO via solveSHG_biaxial' },
+];
+
+let html = '';
+for (const s of sections) {
+  html += `<h2>${s.title}</h2>
+<table><thead><tr><th>Test</th><th>Result</th></tr></thead><tbody>
+${rows[s.id] ?? ''}
+</tbody></table>`;
+}
+
+document.write(html);
+
+document.write(`
+<div id="summary">
+  <span class="${fail===0?'pass':'fail'}">
+    ${fail===0 ? '✓ ALL PASS' : '✗ FAILURES'}: ${pass}/${pass+fail} passed
+    ${fail > 0 ? `(${fail} failed)` : ''}
+  </span>
+</div>`);
+</script>
+</body>
+</html>

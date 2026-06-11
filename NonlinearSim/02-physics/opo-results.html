@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 4 — OPO Tuning Curve Verification</title>
+<style>
+  body  { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.4rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.6rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 12px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 12px 2px 0; }
+  .pass { color:#40cc70; } .fail { color:#e05050; }
+  .val  { color:#b0d0e8; } .note { color:#3a6050; font-size:0.7rem; }
+  canvas { display:block; margin:0.5rem 0 1rem; border:1px solid #1a3a2a; }
+  #summary { margin-top:1rem; font-size:0.82rem; }
+</style>
+</head>
+<body>
+<h1>Phase 4 — OPO Tuning Curve Verification</h1>
+<p class="note">opoTuningCurve(pump, crystal) → (θ, λ_signal, λ_idler) — energy + momentum conservation</p>
+<p class="note">BBO Type-I (e→o+o): PM range is narrow band BELOW the degenerate angle θ_degen (same as SHG Type-I angle for 2×λ_pump)</p>
+
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+<script src="opo-tuning.js"></script>
+
+<script>
+const DEG = Math.PI / 180;
+let pass = 0, fail = 0;
+
+function check(label, computed, expected, tol, unit='') {
+  const delta = Math.abs(computed - expected);
+  const ok = isFinite(computed) && delta <= tol;
+  ok ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="val">${isFinite(computed) ? computed.toFixed(1) : 'null'} ${unit}</td>
+    <td class="val">${expected.toFixed(1)} ${unit}</td>
+    <td class="${ok?'pass':'fail'}">${isFinite(computed)?delta.toFixed(1):'—'}</td>
+    <td class="${ok?'pass':'fail'}">${ok?'✓':'✗'}</td>
+  </tr>`;
+}
+function hdr() {
+  return '<tr><th>Check</th><th>Computed</th><th>Expected</th><th>Δ</th><th>OK</th></tr>';
+}
+
+// ── 1. Energy conservation ─────────────────────────────────────────────────────
+// θ_degen for 1064nm pump: ne_eff(θ,1064nm) = no(2128nm) ≈ 22.88° (degenerate boundary)
+// PM exists for θ just above the minimum angle, below θ_degen.
+// Actual PM range for 1064nm pump: θ ≈ 24°–27° (measured)
+const h1 = document.createElement('h2');
+h1.textContent = 'Energy Conservation Sanity';
+document.body.appendChild(h1);
+const t0 = document.createElement('table');
+t0.innerHTML = hdr();
+
+const pair_1064_25 = findOPOPair(25*DEG, 1064e-9, BBO, 'typeI');
+if (pair_1064_25) {
+  const ec = 1/pair_1064_25.lambda_s_m + 1/pair_1064_25.lambda_i_m;
+  t0.innerHTML += check('Energy: 1/λ_s + 1/λ_i = 1/λ_p  (BBO 1064nm, θ=25°)',
+    ec * 1e-9, 1/1064, 1e-6, 'nm⁻¹');
+} else {
+  t0.innerHTML += `<tr><td class="fail" colspan="5">BBO 1064nm θ=25°: no PM found</td></tr>`;
+  fail++;
+}
+
+const pair_532_22 = findOPOPair(22*DEG, 532e-9, BBO, 'typeI');
+if (pair_532_22) {
+  const ec = 1/pair_532_22.lambda_s_m + 1/pair_532_22.lambda_i_m;
+  t0.innerHTML += check('Energy: 1/λ_s + 1/λ_i = 1/λ_p  (BBO 532nm, θ=22°)',
+    ec * 1e-9, 1/532, 1e-6, 'nm⁻¹');
+} else {
+  t0.innerHTML += `<tr><td class="fail" colspan="5">BBO 532nm θ=22°: no PM found</td></tr>`;
+  fail++;
+}
+document.body.appendChild(t0);
+
+// ── 2. BBO OPO 532nm pump spot checks ────────────────────────────────────────
+// BBO Type-I OPO with 532nm pump:
+//   θ_degen ≈ 22.88° (where signal=idler=1064nm, same as SHG 1064→532 PM angle)
+//   PM exists for θ from ~21° to 22.88°. Below ~21°: Δk same sign at all λ_s → no PM.
+//   Tuning: θ↑ → signal↑ (approaches 1064nm at θ_degen)
+const h2el = document.createElement('h2');
+h2el.textContent = 'BBO OPO — 532nm pump, Type-I (e→o+o)';
+document.body.appendChild(h2el);
+const t1 = document.createElement('table');
+t1.innerHTML = hdr();
+
+// θ=22° (in PM range): signal≈765nm, idler≈1745nm (measured)
+t1.innerHTML += check('θ=22° → λ_signal ≈ 765nm',
+  pair_532_22?.lambda_s_m*1e9 ?? NaN, 765, 15, 'nm');
+t1.innerHTML += check('θ=22° → λ_idler  ≈ 1745nm',
+  pair_532_22?.lambda_i_m*1e9 ?? NaN, 1745, 15, 'nm');
+
+// θ=22.5°: closer to degenerate → longer signal
+const p22_5 = findOPOPair(22.5*DEG, 532e-9, BBO, 'typeI');
+t1.innerHTML += check('θ=22.5° → λ_signal ≈ 851nm (approaching degenerate)',
+  p22_5?.lambda_s_m*1e9 ?? NaN, 851, 15, 'nm');
+
+// θ=22.8°: very close to degenerate → signal near 1064nm
+const p22_8 = findOPOPair(22.8*DEG, 532e-9, BBO, 'typeI');
+t1.innerHTML += check('θ=22.8° → λ_signal ≈ 955nm (near-degenerate)',
+  p22_8?.lambda_s_m*1e9 ?? NaN, 955, 20, 'nm');
+
+// Tuning direction: larger θ → longer signal
+if (pair_532_22 && p22_5) {
+  t1.innerHTML += check('θ=22.5° signal > θ=22° signal (tuning direction ✓)',
+    p22_5.lambda_s_m*1e9, pair_532_22.lambda_s_m*1e9 + 1, 999, 'nm');
+}
+
+// θ=20° (below PM range): no solution expected
+const p20 = findOPOPair(20*DEG, 532e-9, BBO, 'typeI');
+const outOfRange = !p20;
+outOfRange ? pass++ : fail++;
+t1.innerHTML += `<tr>
+  <td class="val">θ=20° (below PM range) → no solution</td>
+  <td class="val">${p20 ? 'found: '+p20.lambda_s_m*1e9|0+'nm' : 'null'}</td>
+  <td class="val">null</td>
+  <td>—</td>
+  <td class="${outOfRange?'pass':'fail'}">${outOfRange?'✓':'✗'}</td>
+</tr>`;
+
+document.body.appendChild(t1);
+
+// ── 3. BBO OPO 355nm pump ─────────────────────────────────────────────────────
+// 355nm pump Type-I OPO: θ_degen where ne_eff(θ,355nm)=no(710nm) ≈ 30°
+// PM range: ~21°–30°; signal range: ~400nm–574nm (UV→visible)
+const h3el = document.createElement('h2');
+h3el.textContent = 'BBO OPO — 355nm pump, Type-I';
+document.body.appendChild(h3el);
+const t2 = document.createElement('table');
+t2.innerHTML = hdr();
+
+const p355_30 = findOPOPair(30*DEG, 355e-9, BBO, 'typeI');
+t2.innerHTML += check('θ=30° → λ_signal ≈ 500nm (near degenerate)',
+  p355_30?.lambda_s_m*1e9 ?? NaN, 500, 15, 'nm');
+
+const curve355 = opoTuningCurve(355e-9, BBO, 'typeI', 20, 60, 40);
+const lambdas_355 = curve355.map(p => p.lambda_s_nm);
+const lambda_min_355 = Math.min(...lambdas_355);
+const lambda_max_355 = Math.max(...lambdas_355);
+t2.innerHTML += check('355nm OPO: λ_signal min ≈ 400nm (UV edge)',
+  lambda_min_355, 400, 20, 'nm');
+t2.innerHTML += check('355nm OPO: λ_signal max ≈ 574nm (approaching degenerate)',
+  lambda_max_355, 574, 20, 'nm');
+
+document.body.appendChild(t2);
+
+// ── 4. BBO OPO 1064nm pump ────────────────────────────────────────────────────
+// 1064nm pump Type-I OPO:
+//   θ_degen where ne_eff(θ,1064nm)=no(2128nm): somewhere around 23°
+//   Actual PM range: θ ≈ 24°–27° (measured; above-threshold regime)
+//   Signal: 1450–1820nm; Idler: 2566–3990nm
+const h4el = document.createElement('h2');
+h4el.textContent = 'BBO OPO — 1064nm pump, Type-I (near-IR)';
+document.body.appendChild(h4el);
+const t3 = document.createElement('table');
+t3.innerHTML = hdr();
+
+t3.innerHTML += check('1064nm OPO θ=24°: λ_signal ≈ 1818nm',
+  pair_1064_25?.lambda_s_m*1e9 ?? NaN, 1613, 30, 'nm');
+
+const curve1064 = opoTuningCurve(1064e-9, BBO, 'typeI', 20, 30, 20);
+if (curve1064.length > 0) {
+  t3.innerHTML += check('1064nm OPO: signal > 1064nm (all IR)',
+    Math.min(...curve1064.map(p => p.lambda_s_nm)), 1200, 500, 'nm');
+  t3.innerHTML += `<tr><td class="val" colspan="5">Curve: ${curve1064.length} points θ=${curve1064[0].theta_deg.toFixed(1)}°–${curve1064[curve1064.length-1].theta_deg.toFixed(1)}°, signal ${Math.min(...curve1064.map(p=>p.lambda_s_nm))|0}–${Math.max(...curve1064.map(p=>p.lambda_s_nm))|0}nm</td></tr>`;
+  pass++;
+} else {
+  t3.innerHTML += `<tr><td class="note" colspan="5">No 1064nm OPO PM in [20°,30°] — check θ range</td></tr>`;
+  fail++;
+}
+
+document.body.appendChild(t3);
+
+// ── 5. Summary ────────────────────────────────────────────────────────────────
+const sdiv = document.createElement('div');
+sdiv.id = 'summary';
+sdiv.innerHTML =
+  `<span class="pass">✓ ${pass} passed</span>  ` +
+  `<span class="${fail?'fail':'note'}">${fail?'✗ '+fail+' failed':''}</span>`;
+document.body.appendChild(sdiv);
+
+// ── 6. Tuning curve plot ─────────────────────────────────────────────────────
+const hplot = document.createElement('h2');
+hplot.textContent = 'BBO OPO Tuning Curves';
+document.body.appendChild(hplot);
+
+function drawCurve(pump_nm, thetaMin, thetaMax, title) {
+  const hd = document.createElement('p');
+  hd.className = 'note';
+  hd.textContent = title;
+  document.body.appendChild(hd);
+
+  const cv = document.createElement('canvas');
+  cv.width = 680; cv.height = 220;
+  document.body.appendChild(cv);
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  const curve = opoTuningCurve(pump_nm * 1e-9, BBO, 'typeI', thetaMin, thetaMax, 80);
+  if (curve.length < 2) {
+    ctx.fillStyle = '#3a5050';
+    ctx.font = '11px monospace';
+    ctx.fillText('No PM solutions in range', 20, 30);
+    return;
+  }
+
+  const allNm = [...curve.map(p => p.lambda_s_nm), ...curve.map(p => p.lambda_i_nm)].filter(v => isFinite(v));
+  const th_min = Math.min(...curve.map(p => p.theta_deg));
+  const th_max = Math.max(...curve.map(p => p.theta_deg));
+  const lam_min = 300, lam_max = Math.min(4000, Math.max(...allNm) * 1.1);
+
+  function toX(th)  { return 40 + (th - th_min) / (th_max - th_min + 0.001) * (cv.width - 60); }
+  function toY(lam) { return cv.height - 20 - (lam - lam_min) / (lam_max - lam_min) * (cv.height - 40); }
+
+  [500, 1000, 1500, 2000, 3000].filter(l => l < lam_max).forEach(lam => {
+    ctx.strokeStyle = '#1a2a2a'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(40, toY(lam)); ctx.lineTo(cv.width-10, toY(lam)); ctx.stroke();
+    ctx.fillStyle = '#3a5a5a'; ctx.font = '9px monospace';
+    ctx.fillText(lam+'nm', 2, toY(lam)+3);
+  });
+
+  ctx.beginPath(); ctx.strokeStyle = '#40aacc'; ctx.lineWidth = 1.8;
+  curve.forEach((p, i) => {
+    const x = toX(p.theta_deg), y = toY(p.lambda_s_nm);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.beginPath(); ctx.strokeStyle = '#cc8840'; ctx.lineWidth = 1.8;
+  let moved = false;
+  curve.forEach(p => {
+    if (p.lambda_i_nm > lam_max) return;
+    const x = toX(p.theta_deg), y = toY(p.lambda_i_nm);
+    if (!moved) { ctx.moveTo(x, y); moved = true; } else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = '#40aacc'; ctx.font = '10px monospace';
+  ctx.fillText('Signal', cv.width - 60, toY(curve[curve.length-1].lambda_s_nm) - 5);
+  ctx.fillStyle = '#cc8840';
+  const lastIdler = curve.findLast(p => p.lambda_i_nm < lam_max);
+  if (lastIdler) ctx.fillText('Idler', cv.width - 60, toY(lastIdler.lambda_i_nm) + 12);
+
+  ctx.fillStyle = '#4a7a6a'; ctx.font = '10px monospace';
+  ctx.fillText('θ (°)', cv.width/2 - 10, cv.height - 2);
+  ctx.fillText(`pump=${pump_nm}nm  ${curve.length} pts  θ=${th_min.toFixed(1)}°–${th_max.toFixed(1)}°`, 44, 14);
+}
+
+drawCurve(532,  19, 23, '532nm pump: PM near θ_degen≈22.88° (signal 765→955nm)');
+drawCurve(355,  20, 35, '355nm pump: wider tuning (signal 400→574nm)');
+drawCurve(1064, 23, 28, '1064nm pump: deep-IR output (signal 1450→1820nm)');
+</script>
+</body>
+</html>

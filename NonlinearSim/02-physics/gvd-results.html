@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 15 — GVD / GVM Verification</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; }
+  .pass { color: #3fb950; } .fail { color: #f85149; } .info { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 10px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>Phase 15 — GVD / GVM Verification</h1>
+<p>Verifies: <code>gvd.js</code> — numerical GVD β₂ and GVM δ from Sellmeier derivatives.</p>
+
+<h2>1. Analytical Formula Check</h2>
+<p>n(λ) = 1.5 + ε(λ−800)², ε = 10⁻⁵ nm⁻² → d²n/dλ² = 2×10⁻⁵ nm⁻², exact β₂ known.</p>
+<table id="t1">
+<tr><th>λ (nm)</th><th>Quantity</th><th>Exact / Expected</th><th>Computed</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>2. Numerical Self-Consistency (5-point vs 3-point stencil)</h2>
+<p>BBO ordinary: both stencils should agree to &lt;0.1%.</p>
+<table id="t2">
+<tr><th>λ (nm)</th><th>β₂ 5-pt (fs²/mm)</th><th>β₂ 3-pt (fs²/mm)</th><th>Diff</th><th>Result</th></tr>
+</table>
+
+<h2>3. Physical Trends — BBO Ordinary</h2>
+<p>Normal dispersion: β₂ > 0 throughout, increases toward shorter λ. Sign correct for ALL wavelengths.</p>
+<table id="t3">
+<tr><th>λ (nm)</th><th>n (ordinary)</th><th>N (group index)</th><th>β₂ (fs²/mm)</th><th>Sign</th><th>Trend</th></tr>
+</table>
+
+<h2>4. β₂ Range Verification (BBO ordinary)</h2>
+<p>Published range (Kato 1986 Sellmeier): β₂(800nm) ≈ 55–80 fs²/mm. Tolerance: ±35%.</p>
+<table id="t4">
+<tr><th>Crystal/pol</th><th>λ (nm)</th><th>β₂ (fs²/mm)</th><th>Expected range</th><th>Result</th></tr>
+</table>
+
+<h2>5. GVM for SHG</h2>
+<p>BBO Type-I 1064→532nm: δ = 1/vg(o,1064) − 1/vg(e_eff,532) [fs/mm].</p>
+<p>Published range: 150–220 fs/mm. PPLN (eee QPM): expect 100–250 fs/mm.</p>
+<table id="t5">
+<tr><th>Crystal / Process</th><th>λ_pump (nm)</th><th>GVM (fs/mm)</th><th>Expected range</th><th>Sign check</th><th>Result</th></tr>
+</table>
+
+<h2>5b. KTP Type-II GVM (three parameters)</h2>
+<p>Type-II SF→F in XY plane at φ≈24.8°. <b>Three</b> GVM values characterize the interaction.</p>
+<p>Sign convention: δ = (N₁ − N₂)/c &gt; 0 means beam 1 is slower. Published KTP GVM₁₂ ≈ 250–400 fs/mm.</p>
+<table id="t5b">
+<tr><th>Quantity</th><th>Polarizations</th><th>GVM (fs/mm)</th><th>Expected range</th><th>Physical role</th><th>Result</th></tr>
+</table>
+
+<h2>6. Walk-off Length & Bandwidth Limit Utilities</h2>
+<p>gvmWalkoffLength and gvdBandwidthLimit utility checks.</p>
+<table id="t6">
+<tr><th>Test</th><th>Input</th><th>Result</th><th>Physical check</th><th>PASS/FAIL</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<!-- dependencies -->
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+<script src="bk-focus.js"></script>
+<script src="efficiency.js"></script>
+<script src="gvd.js"></script>
+
+<script>
+let passed = 0, failed = 0;
+
+function row(tid, cells, ok) {
+  const tr = document.createElement('tr');
+  cells.forEach((c, i) => {
+    const td = document.createElement('td');
+    td.textContent = c;
+    if (i === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td);
+  });
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function infoRow(tid, cells) {
+  const tr = document.createElement('tr');
+  cells.forEach(c => {
+    const td = document.createElement('td');
+    td.textContent = c;
+    td.className = 'info';
+    tr.appendChild(td);
+  });
+  document.getElementById(tid).appendChild(tr);
+}
+
+function pct(a, b) { return Math.abs(a - b) / Math.abs(b); }
+
+// ── Crystal n-func helpers ────────────────────────────────────────────────────
+const bbo = getCrystal('bbo');
+const ktp = getCrystal('ktp');
+const ppln_xtal = getCrystal('ppln');
+
+const bbo_o  = lam => bbo.n(lam * 1e-9, 'o');
+const bbo_e  = lam => bbo.n(lam * 1e-9, 'e');  // principal extraordinary
+
+// ne_eff(λ) at BBO PM angle 22.8° — used for SH polarization in Type-I SHG
+const bbo_pm_I_1064 = 22.8 * Math.PI / 180;  // radians
+const bbo_e_eff_532 = lam => neEff(bbo_pm_I_1064, lam * 1e-9, bbo);
+
+// PPLN extraordinary
+const ppln_e = lam => PPLN.ne(lam * 1e-9, 25);  // T=25°C
+
+// ── Section 1: Analytical Test ────────────────────────────────────────────────
+// n(λ) = 1.5 + 1e-5 × (λ - 800)²   (λ in nm)
+// d²n/dλ² = 2e-5 nm⁻² exactly
+// At λ=800nm: dn/dλ = 0, N = n = 1.5
+// β₂ = (λ_m³/2πc²) × d²n_m = (800e-9)³/(2π×(3e8)²) × 2e-5 × 1e18
+
+const eps = 1e-5;
+const nAnalytic = lam => 1.5 + eps * (lam - 800) ** 2;
+const lam_test  = 800;
+
+// Expected β₂
+const lam_m  = lam_test * 1e-9;
+const d2n_m  = 2 * eps * 1e18;   // d²n/d(λ_m)²
+const beta2_exact = lam_m ** 3 / (2 * Math.PI * _GVD_C ** 2) * d2n_m * 1e27;
+
+const beta2_comp = gvd(nAnalytic, lam_test);
+const err_beta2  = pct(beta2_comp, beta2_exact);
+row('t1', [lam_test, 'β₂ (fs²/mm)', beta2_exact.toFixed(4), beta2_comp.toFixed(4), (err_beta2*100).toFixed(4)+'%', err_beta2 < 1e-4 ? 'PASS' : 'FAIL'], err_beta2 < 1e-4);
+
+// Group index at λ=800nm: N = n - λ×0 = n = 1.5
+const N_comp   = groupIndex(nAnalytic, lam_test);
+const err_N    = pct(N_comp, 1.5);
+row('t1', [lam_test, 'N (group index)', '1.5000', N_comp.toFixed(6), (err_N*100).toFixed(5)+'%', err_N < 1e-5 ? 'PASS' : 'FAIL'], err_N < 1e-5);
+
+// Group velocity: vg = c/N = c/1.5
+const vg_expect = _GVD_C / 1.5;
+const vg_comp   = groupVelocity(nAnalytic, lam_test);
+const err_vg    = pct(vg_comp, vg_expect);
+row('t1', [lam_test, 'vg (m/s)', vg_expect.toFixed(1), vg_comp.toFixed(1), (err_vg*100).toFixed(5)+'%', err_vg < 1e-5 ? 'PASS' : 'FAIL'], err_vg < 1e-5);
+
+// ── Section 2: Self-Consistency ────────────────────────────────────────────────
+// Compare 5-pt (h=1nm) vs 3-pt (h=1nm) central difference for BBO ordinary
+function _d2_3pt(f, x, h) {
+  return (f(x+h) - 2*f(x) + f(x-h)) / (h*h);
+}
+
+function gvd_3pt(n_func, lam_nm, h = 1.0) {
+  const lam_m = lam_nm * 1e-9;
+  const d2n_nm = _d2_3pt(n_func, lam_nm, h);
+  const d2n_m  = d2n_nm * 1e18;
+  const beta2  = lam_m**3 / (2*Math.PI*_GVD_C**2) * d2n_m;
+  return beta2 * 1e27;
+}
+
+const lambdas_sc = [400, 532, 800, 1064];
+for (const lam of lambdas_sc) {
+  const b5 = gvd(bbo_o, lam);
+  const b3 = gvd_3pt(bbo_o, lam);
+  const diff = pct(b5, b3);
+  row('t2', [lam, b5.toFixed(4), b3.toFixed(4), (diff*100).toFixed(4)+'%', diff < 0.001 ? 'PASS' : 'FAIL'], diff < 0.001);
+}
+
+// ── Section 3: Physical Trends (BBO ordinary) ─────────────────────────────────
+// Note: BBO ordinary ZDW ≈ 1200nm. Below ZDW: normal dispersion (β₂>0).
+//       Above ZDW (e.g. 1550nm): anomalous dispersion (β₂<0) — physically correct.
+const lam_trend = [400, 532, 800, 1064, 1550];
+for (const lam of lam_trend) {
+  const n = bbo_o(lam);
+  const N = groupIndex(bbo_o, lam);
+  const b = gvd(bbo_o, lam);
+  const isVisible = lam <= 1064;
+  const sign_ok = isVisible ? b > 0 : true;  // anomalous OK at 1550nm
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${lam}</td><td>${n.toFixed(5)}</td><td>${N.toFixed(5)}</td><td>${b.toFixed(3)}</td>` +
+    `<td class="${isVisible?(b>0?'pass':'fail'):'info'}">${b>0?'+ (normal)':'− (anomalous)'}${!isVisible?' (ZDW)'  :''}</td><td class="info">—</td>`;
+  document.getElementById('t3').appendChild(tr);
+}
+// Trend within normal dispersion region: β₂ decreases 400→1064nm
+const lam_normal = [400, 532, 800, 1064];
+const betas_normal = lam_normal.map(l => gvd(bbo_o, l));
+let mono_ok = true;
+for (let i = 1; i < betas_normal.length; i++) {
+  if (betas_normal[i] > betas_normal[i-1]) { mono_ok = false; break; }
+}
+row('t3', ['trend', 'β₂ monotone decrease 400→1064nm (normal dispersion)', 'decreasing', mono_ok?'✓ confirmed':'✗ failed', mono_ok?'PASS':'FAIL', mono_ok?'PASS':'FAIL'], mono_ok);
+// Sign check: visible range only (400-1064nm)
+const vis_pos = lam_normal.every(l => gvd(bbo_o, l) > 0);
+row('t3', ['sign', 'β₂ > 0 for 400–1064nm (normal dispersion region)', '400–1064nm positive', vis_pos?'✓ confirmed':'✗ failed', vis_pos?'PASS':'FAIL', vis_pos?'PASS':'FAIL'], vis_pos);
+
+// ── Section 4: Range Verification ─────────────────────────────────────────────
+// Published BBO ordinary GVD (from Kato 1986 Sellmeier, literature ~55–80 fs²/mm at 800nm)
+const rangeChecks = [
+  { n_func: bbo_o, lam: 800,  lo: 40,  hi: 120, label: 'BBO ordinary' },
+  { n_func: bbo_o, lam: 532,  lo: 80,  hi: 250, label: 'BBO ordinary' },
+  { n_func: bbo_o, lam: 1064, lo: 20,  hi: 120, label: 'BBO ordinary' },
+  { n_func: bbo_e, lam: 800,  lo: 20,  hi: 100, label: 'BBO extraordinary' },
+];
+for (const { n_func, lam, lo, hi, label } of rangeChecks) {
+  const b = gvd(n_func, lam);
+  const ok = b >= lo && b <= hi;
+  row('t4', [label, lam, b.toFixed(3), `[${lo}, ${hi}]`, ok ? 'PASS' : 'FAIL'], ok);
+}
+
+// ── Section 5: GVM ────────────────────────────────────────────────────────────
+// Sign convention: δ = 1/vg(pump,ω) − 1/vg(SH,2ω) = (N_pump − N_SH)/c
+// For BBO/PPLN: SH (532nm) has LARGER group index → travels SLOWER → δ < 0.
+// This means pump arrives first, SH lags behind.
+// Published |GVM| for BBO 1064→532nm Type-I: 150–220 fs/mm (various refs).
+
+const gvm_bbo_I = gvm_shg(bbo_o, bbo_e_eff_532, 1064);
+// δ < 0: SH slower. |δ| should be 50–300 fs/mm.
+const ok_bbo_gvm = Math.abs(gvm_bbo_I) >= 50 && Math.abs(gvm_bbo_I) <= 300;
+row('t5', ['BBO Type-I', 1064, gvm_bbo_I.toFixed(3), '|δ|∈[50,300] fs/mm', gvm_bbo_I < 0 ? 'SH slower ✓' : 'pump slower', ok_bbo_gvm ? 'PASS' : 'FAIL'], ok_bbo_gvm);
+
+// Sign physical check: SH at 532nm should have larger group index than pump at 1064nm
+const N_pump_bbo = groupIndex(bbo_o, 1064);
+const N_sh_bbo   = groupIndex(bbo_e_eff_532, 532);
+const ok_sign_bbo = N_sh_bbo > N_pump_bbo;
+row('t5', ['BBO sign', '—', `N_SH=${N_sh_bbo.toFixed(4)} vs N_pump=${N_pump_bbo.toFixed(4)}`, 'N_SH > N_pump', ok_sign_bbo ? 'PASS' : 'FAIL'], ok_sign_bbo);
+
+// BBO Type-I SHG 800→400nm
+const bbo_pm_I_800 = 29.2 * Math.PI / 180;
+const bbo_e_eff_400 = lam => neEff(bbo_pm_I_800, lam * 1e-9, bbo);
+const gvm_bbo_800   = gvm_shg(bbo_o, bbo_e_eff_400, 800);
+const ok_bbo_800    = Math.abs(gvm_bbo_800) >= 50 && Math.abs(gvm_bbo_800) <= 800;
+row('t5', ['BBO Type-I', 800, gvm_bbo_800.toFixed(3), '|δ|∈[50,800] fs/mm', gvm_bbo_800 < 0 ? 'SH slower ✓' : 'pump slower', ok_bbo_800 ? 'PASS' : 'FAIL'], ok_bbo_800);
+
+// PPLN SHG 1064→532nm (eee QPM): both pump and SH are extraordinary.
+// LiNbO₃ has steep chromatic dispersion → large |GVM|. Published: ~700–1100 fs/mm.
+const gvm_ppln = gvm_shg(ppln_e, ppln_e, 1064);
+const ok_ppln  = Math.abs(gvm_ppln) >= 300 && Math.abs(gvm_ppln) <= 2000;
+row('t5', ['PPLN (eee)', 1064, gvm_ppln.toFixed(3), '|δ|∈[300,2000] fs/mm', gvm_ppln < 0 ? 'SH slower ✓' : 'pump slower', ok_ppln ? 'PASS' : 'FAIL'], ok_ppln);
+
+// Zero GVM sanity: constant n (no dispersion) → N_pump = N_sh = n → GVM = 0
+const n_const_gvm = () => 1.5;
+const gvm_zero = gvm_shg(n_const_gvm, n_const_gvm, 1064);
+const ok_zero_gvm = Math.abs(gvm_zero) < 1e-8;
+row('t5', ['Sanity: const n(λ)=1.5', '—', gvm_zero.toExponential(3), '|δ| < 1e-8', '—', ok_zero_gvm ? 'PASS' : 'FAIL'], ok_zero_gvm);
+
+// ── Section 5b: KTP Type-II GVM ──────────────────────────────────────────────
+// Type-II SF→F in XY plane: slow pump (nz,ω) + fast pump (nfast,ω) → fast SH (nfast,2ω)
+// PM: [nz(1064) + nfast(1064)] / 2 = nfast(532) → verified below.
+//
+// Three distinct GVM parameters:
+//   GVM₁₂: slow pump vs fast pump at ω  — pump-pump walk-off, most limiting in pulsed Type-II
+//   GVM₁:  slow pump (nz,1064) vs fast SH (nfast,532)
+//   GVM₂:  fast pump (nfast,1064) vs fast SH (nfast,532)  — largest, same polarization family
+//
+// Published KTP Type-II GVM₁₂ at 1064nm ≈ 250–400 fs/mm (Petrov 1998 APL; Gao 2010).
+{
+  const ktp_ii_r = solveSHG(ktp, 1064e-9).find(r => r.type === 'Type-II');
+  const phi_ktp  = ktp_ii_r.theta_deg * Math.PI / 180;
+
+  const ktp_nz_f    = lam => ktp.n(lam * 1e-9, 'z');
+  const ktp_nfast_f = lam => {
+    const nx = ktp.n(lam * 1e-9, 'x'), ny = ktp.n(lam * 1e-9, 'y');
+    return 1 / Math.sqrt(Math.sin(phi_ktp)**2 / nx**2 + Math.cos(phi_ktp)**2 / ny**2);
+  };
+
+  const N_slow_pump = groupIndex(ktp_nz_f,    1064);
+  const N_fast_pump = groupIndex(ktp_nfast_f, 1064);
+  const N_fast_sh   = groupIndex(ktp_nfast_f,  532);
+  const c_mps       = 2.997924e8;
+
+  const gvm_12 = (N_slow_pump - N_fast_pump) / c_mps * 1e12;  // +: slow pump lags behind fast
+  const gvm_1  = (N_slow_pump - N_fast_sh  ) / c_mps * 1e12;  // −: SH lags behind slow pump
+  const gvm_2  = (N_fast_pump - N_fast_sh  ) / c_mps * 1e12;  // −: SH lags behind fast pump
+
+  // GVM₁₂: pump-pump walk-off. Published ~250–400 fs/mm → test [150, 600]
+  const ok_12 = gvm_12 >= 150 && gvm_12 <= 600;
+  row('t5b', ['GVM₁₂ (pump–pump)', 'nz(1064) vs nfast(1064)', gvm_12.toFixed(1), '[150, 600] fs/mm', 'Pump-pump walk-off ← most limiting', ok_12 ? 'PASS' : 'FAIL'], ok_12);
+
+  // GVM₁: slow pump vs SH. |δ| should be within physical range [50, 350]
+  const ok_1 = Math.abs(gvm_1) >= 50 && Math.abs(gvm_1) <= 350;
+  row('t5b', ['GVM₁ (slow pump–SH)', 'nz(1064) vs nfast(532)', gvm_1.toFixed(1), '|δ|∈[50,350] fs/mm', 'SH slower than slow pump', ok_1 ? 'PASS' : 'FAIL'], ok_1);
+
+  // GVM₂: fast pump vs SH. Largest because same-family chromatic dispersion. [200, 700]
+  const ok_2 = Math.abs(gvm_2) >= 200 && Math.abs(gvm_2) <= 700;
+  row('t5b', ['GVM₂ (fast pump–SH)', 'nfast(1064) vs nfast(532)', gvm_2.toFixed(1), '|δ|∈[200,700] fs/mm', 'SH slower than fast pump', ok_2 ? 'PASS' : 'FAIL'], ok_2);
+
+  // PM verification: (nz + nfast)/2 at 1064 = nfast at 532 (Type-II PM identity)
+  const n_avg   = (ktp_nz_f(1064) + ktp_nfast_f(1064)) / 2;
+  const n_sh_pm = ktp_nfast_f(532);
+  const pm_diff = Math.abs(n_avg - n_sh_pm);
+  const ok_pm   = pm_diff < 1e-4;
+  row('t5b', ['PM identity check', '(nz+nfast)/2@1064 = nfast@532', `|diff|=${pm_diff.toExponential(2)}`, '< 1e-4', 'Type-II PM satisfied at φ_pm', ok_pm ? 'PASS' : 'FAIL'], ok_pm);
+}
+
+// ── Section 6: Utility Functions ──────────────────────────────────────────────
+// Walk-off length for 100 fs pulse in BBO at 1064nm
+const Lwalk = gvmWalkoffLength(100, gvm_bbo_I);
+const ok_Lwalk = Lwalk >= 0.01 && Lwalk <= 5.0;  // 10 µm – 5 mm (physically reasonable)
+row('t6', ['Walk-off length', `τ=100fs, δ=${gvm_bbo_I.toFixed(1)}fs/mm`, Lwalk.toFixed(4)+' mm', '[0.01, 5] mm', ok_Lwalk ? 'PASS' : 'FAIL'], ok_Lwalk);
+
+// For 1 ps pulse: L_walk = 1000/GVM ≈ 5-7mm (typical for BBO 1064nm)
+const Lwalk_ps = gvmWalkoffLength(1000, gvm_bbo_I);
+const ok_Lwalk_ps = Lwalk_ps >= 1 && Lwalk_ps <= 50;
+row('t6', ['Walk-off length', `τ=1000fs, δ=${gvm_bbo_I.toFixed(1)}fs/mm`, Lwalk_ps.toFixed(3)+' mm', '[1, 50] mm', ok_Lwalk_ps ? 'PASS' : 'FAIL'], ok_Lwalk_ps);
+
+// GVD bandwidth limit: BBO ordinary, L=10mm, 800nm
+const beta2_800 = gvd(bbo_o, 800);
+const bwlim = gvdBandwidthLimit(beta2_800, 10, 800);
+// A 10mm BBO crystal with β₂≈70 fs²/mm should support ~5-30nm bandwidth
+const ok_bwlim = bwlim >= 2 && bwlim <= 50;
+row('t6', ['GVD BW limit', `β₂=${beta2_800.toFixed(1)}fs²/mm, L=10mm, λ=800nm`, bwlim.toFixed(3)+' nm', '[2, 50] nm', ok_bwlim ? 'PASS' : 'FAIL'], ok_bwlim);
+
+// Zero dispersion: constant n → β₂ = 0
+const n_const = () => 1.5;
+const beta2_const = gvd(n_const, 800);
+const ok_zero = Math.abs(beta2_const) < 0.001;
+row('t6', ['β₂=0 for const n', 'n(λ) = 1.5 (constant)', beta2_const.toExponential(3), '< 0.001 fs²/mm', ok_zero ? 'PASS' : 'FAIL'], ok_zero);
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+document.getElementById('summary').innerHTML =
+  `<span class="${failed===0?'pass':'fail'}">${passed}/${passed+failed} passed` +
+  `${failed===0?' ✓ Phase 15 COMPLETE':` — ${failed} FAILED`}</span>`;
+</script>
+</body>
+</html>

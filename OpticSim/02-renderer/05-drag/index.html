@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>05-drag validation</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#b0d0e8; font-family:monospace; overflow:hidden; }
+
+  #info {
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    background:rgba(6,12,20,0.85); border:1px solid #1a3050;
+    padding:10px 20px; border-radius:8px; font-size:0.78rem;
+    pointer-events:none; white-space:nowrap; z-index:10;
+  }
+  #info .row { display:flex; gap:24px; }
+  #info .lbl { color:#4a8aaa; }
+  #info .val { color:#7ec8e3; min-width:60px; display:inline-block; }
+  #hint {
+    position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+    background:rgba(6,12,20,0.7); border:1px solid #1a2a3a;
+    padding:5px 16px; border-radius:20px; font-size:0.7rem; color:#3a5a7a;
+    pointer-events:none;
+  }
+  #canvas-wrap { width:100vw; height:100vh; }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <div class="row">
+    <span><span class="lbl">Lens A: </span><span class="val" id="zA">—</span></span>
+    <span><span class="lbl">Lens B: </span><span class="val" id="zB">—</span></span>
+    <span><span class="lbl">Lens C: </span><span class="val" id="zC">—</span></span>
+  </div>
+  <div id="msg" style="margin-top:5px; color:#5a9a5a; text-align:center; min-height:1em;"></div>
+</div>
+<div id="hint">Drag lenses along Z &nbsp;|&nbsp; Left-drag empty: rotate &nbsp;|&nbsp; Scroll: zoom</div>
+<div id="canvas-wrap"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../../02-renderer/04-elements/elements.js"></script>
+<script src="drag.js"></script>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const SYSTEM_L  = 1.0;   // total system length (m)
+const MIN_GAP   = 0.05;  // minimum distance between elements (m)
+const APERTURE  = 0.06;  // fixed aperture for demo lenses (world units)
+const INIT_POS  = [0.20, 0.50, 0.80];  // initial z positions
+
+// ── Three.js scene ────────────────────────────────────────────────────────────
+const THREE    = window.THREE;
+const wrap     = document.getElementById('canvas-wrap');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+renderer.setClearColor(0x0d1117);
+wrap.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 0.001, 50);
+const midZ   = SYSTEM_L / 2;
+const dist   = SYSTEM_L * 0.8;
+camera.position.set(dist * 0.75, dist * 0.6, midZ);
+camera.lookAt(0, 0, midZ);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 0, midZ);
+controls.update();
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(0.2, 0.5, 0.5);
+scene.add(dir);
+
+// Optical axis
+function buildAxis() {
+  const mat  = new THREE.LineBasicMaterial({ color: 0x2a4a6a, transparent:true, opacity:0.6 });
+  const pts  = [new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,SYSTEM_L)];
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+  const tickMat = new THREE.LineBasicMaterial({ color:0x2a4a6a, transparent:true, opacity:0.35 });
+  const ts = 0.012;
+  for (let z=0; z<=SYSTEM_L+1e-9; z+=0.1) {
+    const p = [new THREE.Vector3(-ts,0,z), new THREE.Vector3(ts,0,z)];
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(p), tickMat));
+  }
+}
+buildAxis();
+
+// ── Build 3 lens meshes ───────────────────────────────────────────────────────
+// Lens A: converging (f>0), Lens B: diverging (f<0), Lens C: converging
+const LENS_PARAMS = [
+  { f:  0.3 },
+  { f: -0.2 },
+  { f:  0.4 },
+];
+
+const positions  = [...INIT_POS];  // live z positions (updated on drag end)
+const lensGroups = LENS_PARAMS.map((p, i) => {
+  const g = buildLensMesh(p, APERTURE);
+  g.position.set(0, 0, positions[i]);
+  scene.add(g);
+  return g;
+});
+
+// ── Dragger ───────────────────────────────────────────────────────────────────
+const dragger = createElementDragger(renderer, camera, controls, onDragZ);
+
+function refreshDragger() {
+  dragger.setGroups(lensGroups.map((group, i) => ({ group, opticIndex: i })));
+}
+refreshDragger();
+
+// ── Drag callback ─────────────────────────────────────────────────────────────
+const msgEl = document.getElementById('msg');
+let msgTimer;
+
+function clamp(oi, z) {
+  const lo = oi > 0 ? lensGroups[oi - 1].position.z + MIN_GAP : MIN_GAP;
+  const hi = oi < lensGroups.length - 1 ? lensGroups[oi + 1].position.z - MIN_GAP : SYSTEM_L - MIN_GAP;
+  return Math.max(lo, Math.min(hi, z));
+}
+
+function onDragZ(oi, newZ, isDragging) {
+  const cz = clamp(oi, newZ);
+  lensGroups[oi].position.z = cz;   // always update visual immediately
+  updateReadout();
+
+  if (!isDragging) {
+    positions[oi] = cz;
+    flash(`Lens ${['A','B','C'][oi]} → z = ${(cz * 100).toFixed(1)} cm`);
+  }
+}
+
+// ── Readout ───────────────────────────────────────────────────────────────────
+function updateReadout() {
+  ['zA','zB','zC'].forEach((id, i) => {
+    document.getElementById(id).textContent = (lensGroups[i].position.z * 100).toFixed(1) + ' cm';
+  });
+}
+updateReadout();
+
+function flash(msg) {
+  msgEl.textContent = msg;
+  clearTimeout(msgTimer);
+  msgTimer = setTimeout(() => { msgEl.textContent = ''; }, 2000);
+}
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+});
+
+// ── Animation ─────────────────────────────────────────────────────────────────
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

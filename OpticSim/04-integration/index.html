@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OpticSim</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; }
+
+  #panel-body::-webkit-scrollbar { width: 5px; }
+  #panel-body::-webkit-scrollbar-track { background: #080d14; }
+  #panel-body::-webkit-scrollbar-thumb { background: #1a2a3a; border-radius: 3px; }
+
+  /* ── Beam param inputs ───────────────────────────────── */
+  .bp-row   { display:flex; align-items:center; gap:4px; margin-bottom:5px; }
+  .bp-label { color:#4a7a9a; font-size:0.7rem; width:58px; flex-shrink:0; }
+  .bp-input {
+    flex:1; background:#0a1520; border:1px solid #1a2a3a; border-radius:3px;
+    color:#b0d0e8; padding:2px 6px; font-family:monospace; font-size:0.78rem;
+    outline:none; transition:border-color 0.12s;
+  }
+  .bp-input:focus { border-color:#2a5070; color:#cce8ff; }
+  .bp-unit  { color:#3a6070; font-size:0.7rem; flex-shrink:0; width:26px; }
+  .bp-presets { display:flex; gap:3px; flex-wrap:wrap; margin-bottom:6px; }
+  .bp-preset  {
+    font-size:0.6rem; padding:1px 5px; background:#080f18;
+    border:1px solid #1a2a3a; color:#3a6080; cursor:pointer;
+    border-radius:3px; font-family:monospace;
+    transition:border-color 0.1s,color 0.1s;
+  }
+  .bp-preset:hover { border-color:#2a5070; color:#7ec8e3; }
+
+  /* ── Spot viewer section ─────────────────────────────── */
+  .sv-row   { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+  .sv-label { color:#4a7a9a; font-size:0.7rem; width:52px; flex-shrink:0; }
+  .sv-val   { color:#7ec8e3; font-size:0.72rem; font-family:monospace; }
+  .sv-input {
+    flex:1; background:#0a1520; border:1px solid #1a2a3a; border-radius:3px;
+    color:#b0d0e8; padding:2px 6px; font-family:monospace; font-size:0.76rem;
+    outline:none; transition:border-color 0.12s;
+  }
+  .sv-input:focus { border-color:#2a5070; }
+  .sv-unit  { color:#3a6070; font-size:0.7rem; flex-shrink:0; width:22px; }
+  .sv-toggle {
+    width:100%; padding:3px 0; margin-bottom:5px;
+    background:#08121c; border:1px solid #1a3a4a; border-radius:3px;
+    color:#3a7080; font-family:monospace; font-size:0.72rem; cursor:pointer;
+    transition:border-color 0.12s, color 0.12s;
+  }
+  .sv-toggle.active { border-color:#2a6070; color:#7ec8e3; background:#0a1c28; }
+  .sv-toggle:hover  { border-color:#2a5070; color:#6ab8d0; }
+
+  /* ── NonlinearSim panel ──────────────────────────────── */
+  .nl-results { margin-top:4px; }
+  .nl-row {
+    display:flex; align-items:center; gap:5px; padding:3px 0;
+    border-bottom:1px solid #0d1c28; font-family:monospace; font-size:0.72rem;
+  }
+  .nl-dot  { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .nl-lbl  { color:#7ec8e3; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .nl-eta  { color:#4a9a5a; width:52px; text-align:right; flex-shrink:0; }
+  .nl-apply {
+    background:#0d1c2c; border:1px solid #1a3a4a; color:#3a7080; flex-shrink:0;
+    padding:1px 6px; border-radius:3px; cursor:pointer;
+    font-family:monospace; font-size:0.68rem;
+    transition:border-color 0.1s, color 0.1s;
+  }
+  .nl-apply:hover { border-color:#2a6070; color:#7ec8e3; }
+  .nl-row.applied { background:#0a1c12; }
+  .nl-status { margin-top:5px; font-size:0.68rem; color:#2a5060; min-height:1.1em; }
+
+  /* ── Viewport overlays ───────────────────────────────── */
+  #hint {
+    position:absolute; bottom:0.6rem; left:50%; transform:translateX(-50%);
+    background:rgba(6,11,18,0.7); border:1px solid #1a2a3a;
+    padding:0.3rem 0.85rem; border-radius:20px;
+    font-family:monospace; font-size:0.7rem; color:#3a5a7a;
+    pointer-events:none; white-space:nowrap;
+  }
+  #toast {
+    position:absolute; top:0.7rem; left:50%; transform:translateX(-50%);
+    background:#0e2438; border:1px solid #2a5070;
+    padding:0.28rem 1rem; border-radius:20px;
+    font-family:monospace; font-size:0.7rem; color:#7ec8e3;
+    pointer-events:none; opacity:0; transition:opacity 0.18s;
+    white-space:nowrap;
+  }
+  #err-banner {
+    position:absolute; top:0; left:0; right:0;
+    background:#3a0808; border-bottom:1px solid #7a2020;
+    padding:0.3rem 1rem; font-family:monospace; font-size:0.72rem;
+    color:#e08080; display:none; pointer-events:none;
+  }
+</style>
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../01-physics/01-matrices/matrices.js"></script>
+<script src="../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../01-physics/00-sellmeier/sellmeier.js"></script>
+<script src="../01-physics/04-sampler/sampler.js"></script>
+<script src="../02-renderer/01-scene/scene.js"></script>
+<script src="../02-renderer/02-envelope/envelope.js"></script>
+<script src="../02-renderer/03-rays/rays.js"></script>
+<script src="../02-renderer/04-elements/elements.js"></script>
+<script src="../02-renderer/05-drag/drag.js"></script>
+<script src="../02-renderer/06-spot/spot.js"></script>
+<script src="../03-ui/01-panel-shell/panel.js"></script>
+<script src="../03-ui/02-element-list/element-list.js"></script>
+<script src="../03-ui/03-param-editor/param-editor.js"></script>
+
+<!-- NonlinearSim integration -->
+<script src="../../NonlinearSim/01-crystals/bbo.js"></script>
+<script src="../../NonlinearSim/01-crystals/ktp.js"></script>
+<script src="../../NonlinearSim/01-crystals/lbo.js"></script>
+<script src="../../NonlinearSim/01-crystals/kdp.js"></script>
+<script src="../../NonlinearSim/01-crystals/ppln.js"></script>
+<script src="../../NonlinearSim/01-crystals/index.js"></script>
+<script src="../../NonlinearSim/02-physics/sellmeier.js"></script>
+<script src="../../NonlinearSim/02-physics/phase-match.js"></script>
+<script src="../../NonlinearSim/02-physics/opo-tuning.js"></script>
+<script src="../../NonlinearSim/02-physics/ppln-qpm.js"></script>
+<script src="../../NonlinearSim/02-physics/efficiency.js"></script>
+<script src="../../NonlinearSim/03-solver/solver.js"></script>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// App state
+// ══════════════════════════════════════════════════════════════════════════════
+let beamCfg = {
+  wavelengths: [{ lambda: 1064e-9 }],
+  w0: 1e-3, waistZ: 0, tiltAngle: 0,
+};
+
+// Load beam params from CavitySim URL handoff (?lambda_nm=...&w0_mm=...&waistZ_cm=...)
+(function () {
+  const sp = new URLSearchParams(window.location.search);
+  const lnm = parseFloat(sp.get('lambda_nm'));
+  const w0  = parseFloat(sp.get('w0_mm'));
+  const wz  = parseFloat(sp.get('waistZ_cm'));
+  if (isFinite(lnm) && isFinite(w0) && w0 > 0) {
+    beamCfg.wavelengths = [{ lambda: lnm * 1e-9 }];
+    beamCfg.w0    = w0 * 1e-3;
+    beamCfg.waistZ = isFinite(wz) ? wz * 1e-2 : 0;
+    // Show brief toast after DOM ready
+    window.addEventListener('DOMContentLoaded', () => {
+      const d = document.createElement('div');
+      d.textContent = `Beam loaded from CavitySim  λ=${lnm}nm  w₀=${(w0*1e3).toFixed(1)}µm`;
+      Object.assign(d.style, {
+        position:'fixed', bottom:'16px', right:'16px', background:'#1a3a2a',
+        border:'1px solid #2a8a5a', color:'#6adc9a', padding:'8px 14px',
+        borderRadius:'5px', fontSize:'12px', fontFamily:'monospace', zIndex:'9999',
+      });
+      document.body.appendChild(d);
+      setTimeout(() => d.remove(), 4000);
+    }, { once: true });
+  }
+})();
+
+// Map wavelength (metres) to a Three.js hex colour for 3D rendering
+function wavelengthToColor(lambda_m) {
+  const nm = lambda_m * 1e9;
+  if (nm < 420)  return 0xb040ff;
+  if (nm < 490)  return 0x4060ff;
+  if (nm < 530)  return 0x30cc60;
+  if (nm < 580)  return 0x40dd20;
+  if (nm < 610)  return 0xe0e030;
+  if (nm < 650)  return 0xff5020;
+  if (nm < 750)  return 0xee2020;
+  if (nm < 950)  return 0xcc1818;
+  if (nm < 1200) return 0xaa50cc;
+  return 0x7040cc;
+}
+function wlColorCSS(lambda_m) {
+  return '#' + wavelengthToColor(lambda_m).toString(16).padStart(6, '0');
+}
+function dimColor(c) {
+  return (((c >> 16 & 0xff) >> 4) << 16) | (((c >> 8 & 0xff) >> 4) << 8) | ((c & 0xff) >> 4);
+}
+
+const INIT_ELEMENTS = [
+  { type: 'free', d: 0.20 },
+  { type: 'lens', f: 0.25 },
+  { type: 'free', d: 0.40 },
+  { type: 'lens', f: -0.20 },
+  { type: 'free', d: 0.60 },
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Layout shell
+// ══════════════════════════════════════════════════════════════════════════════
+const UI = createPanelShell(document.body);
+const S  = createScene(UI.viewport);
+
+// Spot viewer
+const spot = createSpotViewer(S.scene);
+spot.attachDrag(S.renderer, S.camera, S.controls);
+
+// Drag: move element meshes along Z, update adjacent free-space d values on release
+const dragger = createElementDragger(S.renderer, S.camera, S.controls, (opticIndex, rawZ, isDragging) => {
+  if (isDragging) {
+    // Visual-only preview — just move the mesh, no physics recompute
+    if (elGroup && opticIndex < elGroup.children.length) {
+      const { clampedZ } = _dragAdjust(EL.getElements(), opticIndex, rawZ);
+      elGroup.children[opticIndex].position.z = clampedZ;
+    }
+  } else {
+    // Commit: update element list d values → recompute beam
+    const { elements: newEls } = _dragAdjust(EL.getElements(), opticIndex, rawZ);
+    EL.setElements(newEls);
+    renderBeam(newEls);
+    showToast('Moved ✓');
+  }
+});
+
+// Viewport overlays
+const errBanner = document.createElement('div'); errBanner.id = 'err-banner';
+const toast     = document.createElement('div'); toast.id = 'toast';
+const hint      = document.createElement('div'); hint.id  = 'hint';
+hint.innerHTML  = 'Left-drag lens: move along Z &nbsp;|&nbsp; Left-drag empty: rotate &nbsp;|&nbsp; Scroll: zoom';
+UI.viewport.append(errBanner, toast, hint);
+
+let toastTimer;
+function showToast(msg, ms=1400) {
+  toast.textContent = msg; toast.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, ms);
+}
+function showErr(msg) {
+  errBanner.textContent = '⚠  ' + msg; errBanner.style.display = 'block';
+  setTimeout(() => { errBanner.style.display = 'none'; }, 4000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 3D render
+// ══════════════════════════════════════════════════════════════════════════════
+let envGroups=[], ringGroups=[], raysGroups=[], elGroup=null;
+
+// ── Drag helper ───────────────────────────────────────────────────────────────
+const _DRAG_MIN_GAP = 0.02;   // minimum distance between any two optics (metres)
+
+function _dragAdjust(elements, opticIndex, rawNewZ) {
+  // Collect z-position of each optic in propagation order
+  const opticZs = [];
+  let z = 0;
+  for (const el of elements) {
+    if (el.type !== 'free') opticZs.push(z);
+    else z += el.d;
+  }
+  const totalLen = z;
+
+  const prevZ = opticIndex > 0                    ? opticZs[opticIndex - 1] : 0;
+  const nextZ  = opticIndex < opticZs.length - 1  ? opticZs[opticIndex + 1] : totalLen;
+  const clampedZ = Math.max(prevZ + _DRAG_MIN_GAP, Math.min(nextZ - _DRAG_MIN_GAP, rawNewZ));
+
+  // Find target optic's list index
+  let oi = -1, targetIdx = -1;
+  for (let i = 0; i < elements.length; i++) {
+    if (elements[i].type !== 'free') { oi++; if (oi === opticIndex) { targetIdx = i; break; } }
+  }
+  if (targetIdx < 0) return { elements, clampedZ };
+
+  // Nearest free-space element immediately before / after the target optic.
+  // Stop if another optic is encountered first (adjacent optics share a position).
+  let prevFree = -1;
+  for (let i = targetIdx - 1; i >= 0; i--) {
+    if (elements[i].type === 'free') { prevFree = i; } break;
+  }
+  let nextFree = -1;
+  for (let i = targetIdx + 1; i < elements.length; i++) {
+    if (elements[i].type === 'free') { nextFree = i; } break;
+  }
+
+  const els = elements.map(el => ({ ...el }));
+  if (prevFree >= 0) els[prevFree] = { ...els[prevFree], d: clampedZ - prevZ };
+  if (nextFree >= 0) els[nextFree] = { ...els[nextFree], d: nextZ    - clampedZ };
+  return { elements: els, clampedZ };
+}
+
+function renderBeam(elements) {
+  if (!elements || elements.length === 0) return;
+  envGroups.forEach(g => S.scene.remove(g));
+  ringGroups.forEach(g => S.scene.remove(g));
+  raysGroups.forEach(g => S.scene.remove(g));
+  if (elGroup) S.scene.remove(elGroup);
+  envGroups = []; ringGroups = []; raysGroups = []; elGroup = null;
+
+  let allBds;
+  try {
+    allBds = beamCfg.wavelengths.map(wl => buildBeamData({
+      beam: { w0: beamCfg.w0, waistZ: beamCfg.waistZ, tiltAngle: beamCfg.tiltAngle, lambda: wl.lambda },
+      elements,
+      sampling: { perSegment: 120 },
+    }));
+  } catch (e) {
+    showErr(e.message);
+    UI.setStats('Error: ' + e.message);
+    return;
+  }
+
+  const L = allBds[0].meta.totalLength;
+  if (L <= 0) return;
+  S.setSystemLength(L);
+
+  // Shared transverse scale across all wavelengths for visual consistency
+  const maxBeamW = Math.max(...allBds.flatMap(bd => bd.gaussian.samples.map(s => s.w)));
+  const tScale = (L * 0.08) / maxBeamW;
+
+  beamCfg.wavelengths.forEach((wl, i) => {
+    const bd    = allBds[i];
+    const color = wavelengthToColor(wl.lambda);
+    const emiss = dimColor(color);
+
+    const env = buildEnvelope(bd.gaussian.samples, {
+      transverseScale: tScale, radialSegments: 56, opacity: 0.13, color, emissive: emiss,
+    });
+    S.addToScene(env);
+    envGroups.push(env);
+
+    const rings = buildWaistRings(bd.gaussian.waists, tScale, { color });
+    S.addToScene(rings);
+    ringGroups.push(rings);
+
+    const raysGrp = buildRayLines(bd.rays.paths, tScale, {
+      azimuthalCount: 3, opacity: 0.45, colors: [color],
+    });
+    S.addToScene(raysGrp);
+    raysGroups.push(raysGrp);
+  });
+
+  // Elements — geometry is wavelength-independent, use first BD's optics
+  const optics = allBds[0].optics;
+  elGroup = buildElements(optics, tScale, maxBeamW);
+  S.addToScene(elGroup);
+  dragger.setGroups(optics.map((_, i) => ({ group: elGroup.children[i], opticIndex: i })));
+
+  // Spot viewer — primary wavelength
+  spot.update(allBds[0].gaussian.samples, tScale);
+  const spotZ = Math.max(0, Math.min(L, spot.getZ()));
+  spot.setZ(spotZ);
+  svUpdateReadout();
+
+  // Stats bar
+  const tiltStr = beamCfg.tiltAngle ? `  θ₀=${(beamCfg.tiltAngle*1e3).toFixed(1)}mrad` : '';
+  const wlStats = beamCfg.wavelengths.map((wl, i) => {
+    const bd = allBds[i];
+    const zR = rayleighRange(beamCfg.w0, wl.lambda);
+    const wStr = bd.gaussian.waists.length
+      ? bd.gaussian.waists.map(w => `z=${(w.z*100).toFixed(1)}cm w=${(w.w*1e6).toFixed(0)}µm`).join('·')
+      : '—';
+    return `λ=${(wl.lambda*1e9).toFixed(0)}nm zR=${zR.toFixed(2)}m  ${wStr}`;
+  }).join('  ┊  ');
+  UI.setStats(`w₀=${(beamCfg.w0*1e3).toFixed(2)}mm  L=${L.toFixed(2)}m${tiltStr}  │  ` + wlStats);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Beam parameter section
+// ══════════════════════════════════════════════════════════════════════════════
+const { content: bpContent } = UI.addSection('sec-beam', 'Beam Parameters');
+
+function buildBeamSection() {
+  bpContent.innerHTML = '';
+
+  // ── Wavelength list ───────────────────────────────────────────────────────
+  const wlHdr = document.createElement('div');
+  wlHdr.style.cssText = 'color:#4a7a9a;font-size:0.7rem;margin-bottom:4px;margin-top:2px;';
+  wlHdr.textContent = 'Wavelengths';
+  bpContent.appendChild(wlHdr);
+
+  const wlList = document.createElement('div');
+  bpContent.appendChild(wlList);
+
+  function renderWlList() {
+    wlList.innerHTML = '';
+    beamCfg.wavelengths.forEach((wl, i) => {
+      const row = document.createElement('div');
+      row.className = 'bp-row';
+      row.style.marginBottom = '3px';
+
+      const dot = document.createElement('div');
+      dot.style.cssText = `width:9px;height:9px;border-radius:50%;flex-shrink:0;
+        background:${wlColorCSS(wl.lambda)};box-shadow:0 0 4px ${wlColorCSS(wl.lambda)}80;`;
+
+      const inp = document.createElement('input');
+      inp.className = 'bp-input'; inp.type = 'number';
+      inp.value = (wl.lambda * 1e9).toFixed(0);
+      inp.min = '200'; inp.max = '10000'; inp.step = '1';
+
+      const unit = document.createElement('span');
+      unit.className = 'bp-unit'; unit.textContent = 'nm';
+
+      const del = document.createElement('button');
+      del.textContent = '×';
+      del.style.cssText = 'background:none;border:none;color:#1e3040;cursor:pointer;font-size:0.85rem;padding:0 2px;flex-shrink:0;line-height:1;';
+      del.title = 'Remove wavelength';
+      del.addEventListener('mouseover', () => del.style.color = '#cc4040');
+      del.addEventListener('mouseout',  () => del.style.color = '#1e3040');
+      if (beamCfg.wavelengths.length <= 1) { del.style.opacity = '0.2'; del.style.cursor = 'default'; }
+
+      function commitWl() {
+        const v = parseFloat(inp.value) * 1e-9;
+        if (!isFinite(v) || v < 200e-9 || v > 10000e-9) { inp.value = (wl.lambda*1e9).toFixed(0); return; }
+        beamCfg.wavelengths[i].lambda = v;
+        dot.style.background = wlColorCSS(v);
+        dot.style.boxShadow  = `0 0 4px ${wlColorCSS(v)}80`;
+        renderBeam(EL.getElements());
+        showToast('Updated');
+      }
+      inp.addEventListener('blur', commitWl);
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+
+      del.addEventListener('click', () => {
+        if (beamCfg.wavelengths.length <= 1) return;
+        beamCfg.wavelengths.splice(i, 1);
+        renderBeam(EL.getElements());
+        renderWlList();
+        showToast('Removed');
+      });
+
+      row.append(dot, inp, unit, del);
+      wlList.appendChild(row);
+    });
+
+    // Preset λ shortcuts + Add button
+    const ps = document.createElement('div');
+    ps.className = 'bp-presets';
+    ps.style.marginBottom = '7px';
+    const PRESETS_NM = [405, 532, 633, 780, 1030, 1064, 1310, 1550];
+    PRESETS_NM.forEach(nm => {
+      const btn = document.createElement('button');
+      btn.className = 'bp-preset';
+      const already = beamCfg.wavelengths.some(w => Math.abs(w.lambda*1e9 - nm) < 1);
+      btn.textContent = nm;
+      btn.style.opacity = already ? '0.35' : '1';
+      btn.title = `Add ${nm} nm`;
+      btn.addEventListener('click', () => {
+        if (beamCfg.wavelengths.length >= 4) { showErr('Max 4 wavelengths'); return; }
+        if (beamCfg.wavelengths.some(w => Math.abs(w.lambda*1e9 - nm) < 1)) return;
+        beamCfg.wavelengths.push({ lambda: nm * 1e-9 });
+        renderBeam(EL.getElements());
+        renderWlList();
+        showToast(`Added ${nm} nm`);
+      });
+      ps.appendChild(btn);
+    });
+    wlList.appendChild(ps);
+  }
+  renderWlList();
+
+  // ── Beam shape params (shared across wavelengths) ─────────────────────────
+  const fields = [
+    { key: 'w0',     label: 'w₀',  unit: 'mm',
+      toDisp: v => (v*1e3).toFixed(2), fromIn: s => parseFloat(s)*1e-3,
+      presets: [0.5, 1, 2, 3, 5] },
+    { key: 'waistZ', label: 'z₀',  unit: 'cm',
+      toDisp: v => (v*100).toFixed(1), fromIn: s => parseFloat(s)*1e-2,
+      presets: [0] },
+    { key: 'tiltAngle', label: 'θ₀', unit: 'mrad',
+      toDisp: v => (v*1e3).toFixed(1), fromIn: s => parseFloat(s)*1e-3,
+      validate: v => isFinite(v),
+      presets: [-20, -10, 0, 10, 20] },
+  ];
+
+  fields.forEach(f => {
+    const { key, label, unit, toDisp, fromIn, presets, validate } = f;
+    const row = document.createElement('div'); row.className = 'bp-row';
+    const lbl = document.createElement('span'); lbl.className = 'bp-label'; lbl.textContent = label;
+    const inp = document.createElement('input');
+    inp.className = 'bp-input'; inp.type = 'number'; inp.value = toDisp(beamCfg[key]);
+    const unitSp = document.createElement('span'); unitSp.className = 'bp-unit'; unitSp.textContent = unit;
+    row.append(lbl, inp, unitSp);
+    bpContent.appendChild(row);
+
+    function commit() {
+      const v = fromIn(inp.value);
+      const ok = validate ? validate(v) : (isFinite(v) && v > 0);
+      if (!ok) { inp.value = toDisp(beamCfg[key]); return; }
+      beamCfg[key] = v;
+      inp.value = toDisp(v);
+      if (key === 'tiltAngle' && Math.abs(v) > 50e-3)
+        showErr('⚠ |θ₀| > 50 mrad — paraxial approx. may break down');
+      renderBeam(EL.getElements());
+      showToast('Updated');
+    }
+    inp.addEventListener('blur',    commit);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+
+    if (presets && presets.length) {
+      const ps = document.createElement('div'); ps.className = 'bp-presets';
+      presets.forEach(p => {
+        const btn = document.createElement('button'); btn.className = 'bp-preset';
+        btn.textContent = p;
+        btn.addEventListener('click', () => {
+          const v = fromIn(String(p));
+          beamCfg[key] = v; inp.value = toDisp(v);
+          if (key === 'tiltAngle' && Math.abs(v) > 50e-3)
+            showErr('⚠ |θ₀| > 50 mrad — paraxial approx. may break down');
+          renderBeam(EL.getElements()); showToast('Updated');
+        });
+        ps.appendChild(btn);
+      });
+      bpContent.appendChild(ps);
+    }
+  });
+}
+
+buildBeamSection();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Element list section
+// ══════════════════════════════════════════════════════════════════════════════
+const { content: elContent } = UI.addSection('sec-el', 'System Elements');
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Param editor section
+// ══════════════════════════════════════════════════════════════════════════════
+const { content: peContent } = UI.addSection('sec-pe', 'Element Parameters', false);
+
+const PE = createParamEditor(peContent, patch => {
+  EL.updateSelected(patch);
+});
+
+const EL = createElementList(elContent, INIT_ELEMENTS, (elements, selIdx, structural) => {
+  PE.show(EL.getSelected());
+  if (structural) {
+    renderBeam(elements);
+    showToast('Updated');
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Spot Viewer section
+// ══════════════════════════════════════════════════════════════════════════════
+const { content: svContent } = UI.addSection('sec-sv', 'Spot Viewer', false);
+let svLastZ = -1;
+
+function buildSpotSection() {
+  svContent.innerHTML = '';
+
+  // Toggle button
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'sv-toggle';
+  toggleBtn.textContent = '● Show cross-section';
+  toggleBtn.addEventListener('click', () => {
+    const on = !toggleBtn.classList.contains('active');
+    if (on) { spot.show(); toggleBtn.classList.add('active'); toggleBtn.textContent = '● Hide cross-section'; }
+    else    { spot.hide(); toggleBtn.classList.remove('active'); toggleBtn.textContent = '● Show cross-section'; }
+  });
+  svContent.appendChild(toggleBtn);
+
+  // z position row
+  const zRow = document.createElement('div'); zRow.className = 'sv-row';
+  const zLbl = document.createElement('span'); zLbl.className = 'sv-label'; zLbl.textContent = 'z';
+  const zInp = document.createElement('input');
+  zInp.className = 'sv-input'; zInp.type = 'number'; zInp.value = '0'; zInp.min = '0'; zInp.step = '1';
+  const zUnit = document.createElement('span'); zUnit.className = 'sv-unit'; zUnit.textContent = 'cm';
+  zRow.append(zLbl, zInp, zUnit);
+  svContent.appendChild(zRow);
+
+  function commitZ() {
+    const v = parseFloat(zInp.value) * 0.01;
+    if (!isFinite(v)) return;
+    spot.setZ(v);
+    svUpdateReadout();
+  }
+  zInp.addEventListener('blur', commitZ);
+  zInp.addEventListener('keydown', e => { if (e.key === 'Enter') zInp.blur(); });
+
+  // w(z) readout row
+  const wRow = document.createElement('div'); wRow.className = 'sv-row';
+  const wLbl = document.createElement('span'); wLbl.className = 'sv-label'; wLbl.textContent = 'w(z)';
+  const wVal = document.createElement('span'); wVal.className = 'sv-val'; wVal.id = 'sv-w-val'; wVal.textContent = '—';
+  wRow.append(wLbl, wVal);
+  svContent.appendChild(wRow);
+
+  svContent._zInp = zInp;
+}
+
+function svUpdateReadout() {
+  const z = spot.getZ();
+  const w = spot.getW();
+  const zInp = svContent._zInp;
+  if (zInp && Math.abs(parseFloat(zInp.value)*0.01 - z) > 1e-4) zInp.value = (z * 100).toFixed(1);
+  const wEl = document.getElementById('sv-w-val');
+  if (wEl) wEl.textContent = w > 0 ? (w * 1e6).toFixed(1) + ' µm' : '—';
+}
+
+buildSpotSection();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Compute button
+// ══════════════════════════════════════════════════════════════════════════════
+UI.computeBtn.addEventListener('click', () => {
+  renderBeam(EL.getElements());
+  showToast('Computed ✓', 1800);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NonlinearSim panel section
+// ══════════════════════════════════════════════════════════════════════════════
+const nlAvailable = (typeof NL !== 'undefined');
+const { content: nlContent } = UI.addSection('sec-nl', 'Nonlinear Crystal', false);
+
+function buildNLSection() {
+  nlContent.innerHTML = '';
+
+  if (!nlAvailable) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'font-size:0.7rem;color:#4a5060;padding:4px 0;';
+    msg.textContent = 'NonlinearSim not loaded.';
+    nlContent.appendChild(msg);
+    return;
+  }
+
+  // ── pump λ ────────────────────────────────────────────────────────────────
+  const pumpRow = document.createElement('div'); pumpRow.className = 'bp-row';
+  const pumpLbl = document.createElement('span'); pumpLbl.className = 'bp-label'; pumpLbl.textContent = 'pump λ';
+  const pumpInp = document.createElement('input'); pumpInp.className = 'bp-input'; pumpInp.type = 'number';
+  pumpInp.value = Math.round(beamCfg.wavelengths[0].lambda * 1e9);
+  pumpInp.min = '300'; pumpInp.max = '5000';
+  const pumpUnit = document.createElement('span'); pumpUnit.className = 'bp-unit'; pumpUnit.textContent = 'nm';
+  pumpRow.append(pumpLbl, pumpInp, pumpUnit);
+  nlContent.appendChild(pumpRow);
+
+  // Pump presets
+  const pumpPresets = document.createElement('div'); pumpPresets.className = 'bp-presets';
+  [532, 800, 1030, 1064].forEach(nm => {
+    const btn = document.createElement('button'); btn.className = 'bp-preset';
+    btn.textContent = nm;
+    btn.addEventListener('click', () => { pumpInp.value = nm; });
+    pumpPresets.appendChild(btn);
+  });
+  nlContent.appendChild(pumpPresets);
+
+  // ── Crystal length ────────────────────────────────────────────────────────
+  const lRow = document.createElement('div'); lRow.className = 'bp-row';
+  const lLbl  = document.createElement('span'); lLbl.className = 'bp-label'; lLbl.textContent = 'L crystal';
+  const lInp  = document.createElement('input'); lInp.className = 'bp-input'; lInp.type = 'number';
+  lInp.value = '10'; lInp.min = '1'; lInp.max = '100';
+  const lUnit = document.createElement('span'); lUnit.className = 'bp-unit'; lUnit.textContent = 'mm';
+  lRow.append(lLbl, lInp, lUnit);
+  nlContent.appendChild(lRow);
+
+  // ── Find button ───────────────────────────────────────────────────────────
+  const findBtn = document.createElement('button');
+  findBtn.style.cssText = 'width:100%;margin:5px 0 4px;padding:4px;background:#08121c;' +
+    'border:1px solid #1a3a4a;border-radius:3px;color:#3a7080;' +
+    'font-family:monospace;font-size:0.73rem;cursor:pointer;' +
+    'transition:border-color 0.1s,color 0.1s;';
+  findBtn.textContent = 'Find SHG Combinations';
+  findBtn.addEventListener('mouseover', () => { findBtn.style.borderColor='#2a6070'; findBtn.style.color='#7ec8e3'; });
+  findBtn.addEventListener('mouseout',  () => { findBtn.style.borderColor='#1a3a4a'; findBtn.style.color='#3a7080'; });
+  nlContent.appendChild(findBtn);
+
+  // ── Results list ──────────────────────────────────────────────────────────
+  const resultsDiv = document.createElement('div'); resultsDiv.className = 'nl-results';
+  nlContent.appendChild(resultsDiv);
+
+  // ── Status line ───────────────────────────────────────────────────────────
+  const statusDiv = document.createElement('div'); statusDiv.className = 'nl-status';
+  nlContent.appendChild(statusDiv);
+
+  // Apply a combination to OpticSim scene
+  function applyCombo(combo, lMm, rowEl) {
+    // 1. Update wavelengths: pump + SH (toOpticSimWavelengths gives {lambda_m, ...})
+    const nlWaves = NL.toOpticSimWavelengths(combo);
+    beamCfg.wavelengths = nlWaves.map(w => ({ lambda: w.lambda_m }));
+    buildBeamSection();
+
+    // 2. Insert crystal as thickLens with canonical SHG layout:
+    //    [free 150mm] → [focusing lens f=150mm] → [free 50mm] → [crystal] → [free 300mm]
+    const crystalEl = NL.toOpticSimElement(combo, lMm);
+    EL.setElements([
+      { type: 'free', d: 0.15 },
+      { type: 'lens', f: 0.15 },
+      { type: 'free', d: 0.05 },
+      crystalEl,
+      { type: 'free', d: 0.30 },
+    ]);
+    renderBeam(EL.getElements());
+
+    // 3. Highlight row and update status
+    resultsDiv.querySelectorAll('.nl-row').forEach(r => r.classList.remove('applied'));
+    if (rowEl) rowEl.classList.add('applied');
+
+    const typeStr  = combo.plane ? `${combo.match_type} (${combo.plane})` : combo.match_type;
+    const angleStr = combo.theta_pm_deg != null ? ` φ=${combo.theta_pm_deg.toFixed(1)}°` : '';
+    const etaStr   = combo.eta_pct     != null ? ` η=${combo.eta_pct.toFixed(3)}%`       : '';
+    const perStr   = combo.period_um   != null ? ` Λ=${combo.period_um.toFixed(2)}µm`    : '';
+    statusDiv.style.color = '#4a9a7a';
+    statusDiv.textContent = `Applied: ${combo.crystal_label} ${typeStr}${angleStr}${etaStr}${perStr}`;
+    showToast('Crystal applied ✓');
+  }
+
+  findBtn.addEventListener('click', () => {
+    const pump_nm = parseFloat(pumpInp.value);
+    const L_mm    = parseFloat(lInp.value);
+    if (!isFinite(pump_nm) || !isFinite(L_mm) || pump_nm < 300) {
+      statusDiv.style.color = '#9a4a4a';
+      statusDiv.textContent = 'Invalid pump wavelength.';
+      return;
+    }
+
+    let result;
+    try {
+      result = NL.findCombinations({
+        target_nm: pump_nm / 2,
+        pump_nm,
+        tol_nm:  5,
+        L_mm,
+        P_W:     1,
+        w0_um:   beamCfg.w0 * 1e6,
+      });
+    } catch (e) {
+      statusDiv.style.color = '#9a4a4a';
+      statusDiv.textContent = 'Search error: ' + e.message;
+      return;
+    }
+
+    const combos = result.combinations;
+    resultsDiv.innerHTML = '';
+    statusDiv.textContent = '';
+
+    if (combos.length === 0) {
+      const none = document.createElement('div');
+      none.style.cssText = 'color:#4a5060;font-size:0.7rem;padding:3px 0;';
+      none.textContent = 'No SHG solutions found.';
+      resultsDiv.appendChild(none);
+      return;
+    }
+
+    combos.forEach(combo => {
+      const row = document.createElement('div'); row.className = 'nl-row';
+
+      // SH wavelength color dot
+      const shNm  = combo.signal_nm || pump_nm / 2;
+      const dotC  = wlColorCSS(shNm * 1e-9);
+      const dot   = document.createElement('div'); dot.className = 'nl-dot';
+      dot.style.cssText = `background:${dotC};box-shadow:0 0 3px ${dotC}80;flex-shrink:0;`;
+
+      // Label
+      const lbl   = document.createElement('span'); lbl.className = 'nl-lbl';
+      const typeS = combo.plane    ? `${combo.match_type}·${combo.plane}`
+                  : combo.match_type === 'QPM' ? 'QPM' : combo.match_type;
+      const angS  = combo.theta_pm_deg != null ? ` ${combo.theta_pm_deg.toFixed(1)}°` : '';
+      const perS  = combo.period_um    != null ? ` Λ${combo.period_um.toFixed(1)}µm`  : '';
+      lbl.textContent = `${combo.crystal.toUpperCase()} ${typeS}${angS}${perS}`;
+      lbl.title = combo.crystal_label + (combo.pm_process ? ` (${combo.pm_process})` : '');
+
+      // Efficiency
+      const eta = document.createElement('span'); eta.className = 'nl-eta';
+      eta.textContent = combo.eta_pct != null ? `${combo.eta_pct.toFixed(3)}%` : '—';
+
+      // Apply button
+      const applyBtn = document.createElement('button'); applyBtn.className = 'nl-apply';
+      applyBtn.textContent = 'Apply';
+      applyBtn.addEventListener('click', e => { e.stopPropagation(); applyCombo(combo, L_mm, row); });
+
+      row.append(dot, lbl, eta, applyBtn);
+      resultsDiv.appendChild(row);
+    });
+  });
+}
+
+buildNLSection();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Boot
+// ══════════════════════════════════════════════════════════════════════════════
+PE.show(EL.getSelected());
+renderBeam(INIT_ELEMENTS);
+S.animate();
+
+// Sync spot readout while disc is dragged in 3D
+setInterval(() => {
+  const z = spot.getZ();
+  if (Math.abs(z - svLastZ) > 5e-4) { svLastZ = z; svUpdateReadout(); }
+}, 80);
+</script>
+</body>
+</html>

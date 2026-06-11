@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CavitySim Phase 3 — Eigenmode Extraction</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; font-weight: bold; }
+  .val  { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 12px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>CavitySim Phase 3 — Eigenmode Extraction</h1>
+<p>Verifies: <code>eigenmode.js</code> — solveEigenmode, propagateQ, beamRadius,
+   beamCurvature, modeProfile. All analytical values derived in PROJECT.md.</p>
+
+<h2>Cavity A — Hemispherical  (flat + curved R=200mm, L=100mm, λ=1064nm)</h2>
+<p>Analytical: q = 0.1i m → w₀=5.82µm at flat mirror, w=8.23µm at curved mirror, R_wf=200mm</p>
+<table id="tA">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>Cavity B — Symmetric  (R₁=R₂=200mm, L=100mm, λ=1064nm)</h2>
+<p>Analytical: q = −0.05+0.0866i m → w=6.26µm at mirrors, waist at center</p>
+<table id="tB">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>General Validity & modeProfile</h2>
+<table id="tG">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="../01-elements/elements.js"></script>
+<script src="roundtrip.js"></script>
+<script src="eigenmode.js"></script>
+<script>
+const LAM = 1064e-9;  // wavelength [m]
+let passed = 0, failed = 0, n = 0;
+
+function addRow(tid, label, expected, actual, ok) {
+  n++;
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td>${n}</td><td>${label}</td>` +
+    `<td class="val">${expected}</td>` +
+    `<td class="val">${actual}</td>` +
+    `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function near(a, b, tol) {
+  if (tol === undefined) tol = Math.abs(b) * 0.01 + 1e-15;  // 1% relative + abs floor
+  return Math.abs(a - b) <= tol;
+}
+function pct(a, b) { return (Math.abs(a-b)/Math.abs(b)*100).toFixed(3) + '%'; }
+function µm(v) { return (v*1e6).toFixed(4) + ' µm'; }
+function mm(v)  { return (v*1e3).toFixed(4) + ' mm'; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Cavity A: Hemispherical  (flat + freeSpace(100mm) + curvedMirror(R=200mm))
+// Analytical: M_rt = [[0,0.1],[-10,0]]  → q = 0.1i
+// ════════════════════════════════════════════════════════════════════════════
+{
+  const m1  = makeElement('flatMirror');
+  const m2  = makeElement('curvedMirror', { R_m: 0.2 });
+  const ica = [makeElement('freeSpace', { L_m: 0.1 })];
+  const Mrt = roundTripMatrix(m1, ica, m2);
+  const em  = solveEigenmode(Mrt, LAM);
+
+  // q analytical = 0 + 0.1i
+  const w0_anal  = Math.sqrt(LAM * 0.1 / Math.PI);   // 5.82 µm
+  const w0_tol   = w0_anal * 0.005;                   // 0.5% tolerance
+
+  addRow('tA', 'stable = true',                 'true',       String(em.stable),        em.stable);
+  addRow('tA', 'Re(q) ≈ 0',                     '0',          em.q.re.toExponential(3), near(em.q.re, 0, 1e-12));
+  addRow('tA', 'Im(q) = 0.1 m (Rayleigh range)','0.1 m',      mm(em.q.im),              near(em.q.im, 0.1, 1e-10));
+  addRow('tA', `w₀ at flat mirror ≈ ${µm(w0_anal)}`, µm(w0_anal), µm(em.w_m),          near(em.w_m, w0_anal, w0_tol));
+  addRow('tA', 'zR = L = 100mm',                '100 mm',     mm(em.zR),                near(em.zR, 0.1, 1e-10));
+
+  // Propagate to curved mirror: q(L) = 0.1i + 0.1 = 0.1+0.1i
+  const q_m2   = propagateQ(em.q, ica[0].M);  // after freeSpace
+  const w_m2   = beamRadius(q_m2, LAM);
+  const R_m2   = beamCurvature(q_m2);
+  const w_m2_anal = Math.sqrt(LAM / (Math.PI * 5));  // Im(1/q)=-5 at curved mirror
+  const w_m2_tol  = w_m2_anal * 0.005;
+
+  addRow('tA', `w at curved mirror ≈ ${µm(w_m2_anal)}`, µm(w_m2_anal), µm(w_m2), near(w_m2, w_m2_anal, w_m2_tol));
+  addRow('tA', 'Wavefront R at curved mirror = R₂ = 200mm', '200 mm', mm(R_m2), near(R_m2, 0.2, 1e-10));
+  addRow('tA', 'w_m2 > w₀ (beam expands away from waist)', `> ${µm(w0_anal)}`, µm(w_m2), w_m2 > em.w_m);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Cavity B: Symmetric  (curvedMirror R=200mm, freeSpace 100mm, curvedMirror R=200mm)
+// Analytical: q = −0.05 + 0.08660i  (from solving 10q²+q+0.1=0)
+// ════════════════════════════════════════════════════════════════════════════
+{
+  const m1  = makeElement('curvedMirror', { R_m: 0.2 });
+  const m2  = makeElement('curvedMirror', { R_m: 0.2 });
+  const ica = [makeElement('freeSpace', { L_m: 0.1 })];
+  const Mrt = roundTripMatrix(m1, ica, m2);
+  const em  = solveEigenmode(Mrt, LAM);
+
+  // Analytical: q = (-1 + i√3)/20
+  const q_re_anal = -0.05;
+  const q_im_anal = Math.sqrt(3) / 20;  // ≈ 0.08660
+
+  addRow('tB', 'stable = true',              'true', String(em.stable), em.stable);
+  addRow('tB', `Re(q) ≈ ${q_re_anal} m`,    mm(q_re_anal), mm(em.q.re), near(em.q.re, q_re_anal, 1e-10));
+  addRow('tB', `Im(q) ≈ ${mm(q_im_anal)} (Rayleigh range)`, mm(q_im_anal), mm(em.q.im), near(em.q.im, q_im_anal, 1e-10));
+
+  // w at mirror1
+  const w_m1 = em.w_m;
+
+  // Propagate to mirror2 (forward through freeSpace only)
+  const q_m2 = propagateQ(em.q, ica[0].M);
+  const w_m2 = beamRadius(q_m2, LAM);
+  const R_m2 = beamCurvature(q_m2);
+
+  addRow('tB', 'w at mirror1 = w at mirror2 (symmetric)', µm(w_m1), µm(w_m2), near(w_m1, w_m2, w_m1*0.001));
+  addRow('tB', 'Wavefront R at mirror2 = R₂ = 200mm', '200 mm', mm(R_m2), near(R_m2, 0.2, 1e-8));
+
+  // w at center (z=50mm): q_center = q₀ + 50mm (Re→0 at waist)
+  const M_half = [[1, 0.05], [0, 1]];
+  const q_center = propagateQ(em.q, M_half);
+  const w_center = beamRadius(q_center, LAM);
+
+  addRow('tB', 'Re(q) ≈ 0 at center (waist at midpoint)', '≈ 0', q_center.re.toExponential(3), near(q_center.re, 0, 1e-14));
+  addRow('tB', 'w at center < w at mirror (waist smaller)', `< ${µm(w_m1)}`, µm(w_center), w_center < w_m1);
+  addRow('tB', 'w at mirror1 > w_center', `> ${µm(w_center)}`, µm(w_m1), w_m1 > w_center);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// General validity & modeProfile
+// ════════════════════════════════════════════════════════════════════════════
+{
+  // Unstable cavity: stable = false, q = null
+  const m1u  = makeElement('curvedMirror', { R_m: 0.1 });
+  const m2u  = makeElement('curvedMirror', { R_m: 0.1 });
+  const Mrtu = roundTripMatrix(m1u, [makeElement('freeSpace',{L_m:0.25})], m2u);
+  const emu  = solveEigenmode(Mrtu, LAM);
+  addRow('tG', 'Unstable cavity: stable = false', 'false', String(emu.stable), !emu.stable);
+  addRow('tG', 'Unstable cavity: q = null',        'null',  String(emu.q),      emu.q === null);
+
+  // Hemispherical: Im(q) > 0 (physical mode)
+  const m1h  = makeElement('flatMirror');
+  const m2h  = makeElement('curvedMirror', { R_m: 0.2 });
+  const Mrth = roundTripMatrix(m1h, [makeElement('freeSpace',{L_m:0.1})], m2h);
+  const emh  = solveEigenmode(Mrth, LAM);
+  addRow('tG', 'Im(q) > 0 (physical solution)', '> 0', emh.q.im.toExponential(4), emh.q.im > 0);
+  addRow('tG', 'w₀ > 0', '> 0', µm(emh.w_m), emh.w_m > 0);
+  addRow('tG', 'zR > 0', '> 0', mm(emh.zR), emh.zR > 0);
+
+  // modeProfile: hemispherical cavity, N=10 samples
+  const fwd = [makeElement('freeSpace', { L_m: 0.1 })];
+  const prof = modeProfile(emh.q, fwd, LAM, 10);
+
+  addRow('tG', 'modeProfile: returns ≥ 3 points', '≥ 3', String(prof.points.length), prof.points.length >= 3);
+  addRow('tG', 'modeProfile: first point z=0', '0 m', mm(prof.points[0].z_m), near(prof.points[0].z_m, 0, 1e-15));
+  addRow('tG', 'modeProfile: last point z=L=100mm', '100 mm', mm(prof.points[prof.points.length-1].z_m), near(prof.points[prof.points.length-1].z_m, 0.1, 1e-12));
+
+  // modeProfile: w at first point matches solveEigenmode w_m
+  const w_first = prof.points[0].w_m;
+  addRow('tG', 'modeProfile: w at z=0 matches solveEigenmode', µm(emh.w_m), µm(w_first), near(w_first, emh.w_m, emh.w_m*1e-9));
+
+  // modeProfile: w at last point (mirror2) matches analytical 8.23µm
+  const w_last   = prof.points[prof.points.length-1].w_m;
+  const w_m2_ref = beamRadius(propagateQ(emh.q, fwd[0].M), LAM);
+  addRow('tG', 'modeProfile: w at mirror2 matches propagateQ', µm(w_m2_ref), µm(w_last), near(w_last, w_m2_ref, w_m2_ref*1e-9));
+
+  // modeProfile: w increases monotonically (hemispherical, waist at flat mirror)
+  const ws = prof.points.map(p => p.w_m);
+  const monotone = ws.every((w, i) => i === 0 || w >= ws[i-1]);
+  addRow('tG', 'modeProfile: w monotone increasing (waist at z=0)', 'true', String(monotone), monotone);
+}
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+const total = passed + failed;
+const sumEl = document.getElementById('summary');
+sumEl.textContent = `${passed}/${total} PASS${failed === 0 ? ' ✓ Phase 3 COMPLETE' : ` — ${failed} FAILED`}`;
+sumEl.style.color = failed === 0 ? '#3fb950' : '#f85149';
+</script>
+</body>
+</html>

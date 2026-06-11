@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>01-panel-shell demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; }
+
+  /* ── Panel body scrollbar ──────────────────────────────── */
+  #panel-body::-webkit-scrollbar { width: 5px; }
+  #panel-body::-webkit-scrollbar-track { background: #080d14; }
+  #panel-body::-webkit-scrollbar-thumb { background: #1a2a3a; border-radius: 3px; }
+
+  /* ── Placeholder element list ─────────────────────────── */
+  .el-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.3rem 0; border-radius: 3px;
+    cursor: default; user-select: none;
+  }
+  .el-row:hover { background: #0d1820; }
+  .el-badge {
+    font-size: 0.65rem; padding: 0.1rem 0.35rem;
+    border-radius: 3px; font-weight: bold; min-width: 36px; text-align: center;
+  }
+  .badge-lens    { background: #0e2438; color: #7ec8e3; }
+  .badge-mirror  { background: #1a1a2a; color: #aaaacc; }
+  .badge-free    { background: #0f1f0f; color: #4a8a4a; }
+  .el-label { font-size: 0.78rem; color: #a0b8c8; flex: 1; }
+  .el-param { font-size: 0.72rem; color: #4a6a7a; }
+
+  /* ── Placeholder param rows ──────────────────────────── */
+  .param-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.22rem 0; font-size: 0.75rem;
+  }
+  .param-key   { color: #4a7a9a; }
+  .param-value {
+    background: #0d1820; border: 1px solid #1a2a3a; border-radius: 3px;
+    color: #a0c8e0; padding: 0.12rem 0.4rem; font-family: monospace;
+    font-size: 0.75rem; width: 80px; text-align: right;
+  }
+  .param-value:focus { outline: none; border-color: #2a5070; color: #c0e0f8; }
+
+  /* ── Beam info rows ──────────────────────────────────── */
+  .info-row {
+    display: flex; justify-content: space-between;
+    padding: 0.22rem 0; font-size: 0.75rem;
+    border-bottom: 1px solid #0f1820;
+  }
+  .info-key { color: #4a7a9a; }
+  .info-val { color: #7ed87e; font-family: monospace; }
+
+  /* ── Add element button strip ────────────────────────── */
+  .add-strip {
+    display: flex; gap: 0.35rem; margin-top: 0.5rem; flex-wrap: wrap;
+  }
+  .add-btn {
+    font-size: 0.68rem; padding: 0.18rem 0.5rem;
+    background: #0d1820; border: 1px solid #1a2a3a;
+    color: #4a7a9a; cursor: pointer; border-radius: 3px;
+    font-family: monospace; transition: border-color 0.12s, color 0.12s;
+  }
+  .add-btn:hover { border-color: #2a5070; color: #7ec8e3; }
+
+  /* ── Hint overlay ────────────────────────────────────── */
+  #hint {
+    position: absolute; bottom: 0.6rem; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(6,11,18,0.7); border: 1px solid #1a2a3a;
+    padding: 0.3rem 0.85rem; border-radius: 20px;
+    font-family: monospace; font-size: 0.7rem; color: #3a5a7a;
+    pointer-events: none; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../../01-physics/01-matrices/matrices.js"></script>
+<script src="../../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../../01-physics/04-sampler/sampler.js"></script>
+<script src="../../02-renderer/01-scene/scene.js"></script>
+<script src="../../02-renderer/02-envelope/envelope.js"></script>
+<script src="../../02-renderer/03-rays/rays.js"></script>
+<script src="../../02-renderer/04-elements/elements.js"></script>
+<script src="panel.js"></script>
+
+<script>
+// ── Optical system ─────────────────────────────────────────────────────────
+let SYSTEM = {
+  beam: { lambda: 1064e-9, w0: 1e-3, waistZ: 0 },
+  elements: [
+    { type: 'free', d: 0.20 },
+    { type: 'lens', f: 0.25 },
+    { type: 'free', d: 0.40 },
+    { type: 'lens', f: -0.20 },
+    { type: 'free', d: 0.60 },
+  ],
+  sampling: { perSegment: 120 },
+};
+
+// ── Build shell ────────────────────────────────────────────────────────────
+const UI = createPanelShell(document.body);
+
+// 3D scene inside the viewport div
+const S = createScene(UI.viewport);
+
+let envGroup = null, ringGroup = null, raysGroup = null, elGroup = null;
+
+function renderBeam() {
+  if (envGroup)  S.scene.remove(envGroup);
+  if (ringGroup) S.scene.remove(ringGroup);
+  if (raysGroup) S.scene.remove(raysGroup);
+  if (elGroup)   S.scene.remove(elGroup);
+
+  const bd = buildBeamData(SYSTEM);
+  const { gaussian, rays, optics, meta } = bd;
+  const L = meta.totalLength;
+
+  S.setSystemLength(L);
+
+  envGroup  = buildEnvelope(gaussian.samples, { radialSegments: 48, opacity: 0.13 });
+  S.addToScene(envGroup);
+  const tScale = envGroup.userData.transverseScale;
+
+  ringGroup = buildWaistRings(gaussian.waists, tScale);
+  S.addToScene(ringGroup);
+
+  raysGroup = buildRayLines(rays.paths, tScale, { azimuthalCount: 3, opacity: 0.42 });
+  S.addToScene(raysGroup);
+
+  const maxBeamW = Math.max(...gaussian.samples.map(s => s.w));
+  elGroup = buildElements(optics, tScale, maxBeamW);
+  S.addToScene(elGroup);
+
+  // Stats bar
+  const zR = rayleighRange(meta.w0, meta.lambda);
+  const waistStr = gaussian.waists.length
+    ? gaussian.waists.map(w => `z=${(w.z*100).toFixed(1)}cm w=${(w.w*1e6).toFixed(0)}µm`).join('  ')
+    : 'no intermediate waist';
+  UI.setStats(
+    `λ=${(meta.lambda*1e9).toFixed(0)}nm  ` +
+    `w₀=${(meta.w0*1e3).toFixed(2)}mm  ` +
+    `zR=${zR.toFixed(2)}m  ` +
+    `L=${L.toFixed(2)}m  │  ${waistStr}`
+  );
+
+  refreshInfo(meta, gaussian);
+}
+
+UI.computeBtn.addEventListener('click', renderBeam);
+
+// ── Left panel sections ────────────────────────────────────────────────────
+// Section 1: System Elements (placeholder list)
+const { content: elContent } = UI.addSection('sec-elements', 'System Elements');
+
+const EL_DATA = [
+  { type: 'free',  badge: 'FREE',  badgeCls: 'badge-free',   label: 'Free space',      param: 'd = 0.20 m' },
+  { type: 'lens',  badge: 'LENS',  badgeCls: 'badge-lens',   label: 'Thin lens (conv)', param: 'f = 250 mm' },
+  { type: 'free',  badge: 'FREE',  badgeCls: 'badge-free',   label: 'Free space',      param: 'd = 0.40 m' },
+  { type: 'lens',  badge: 'LENS',  badgeCls: 'badge-lens',   label: 'Thin lens (div)',  param: 'f = −200 mm' },
+  { type: 'free',  badge: 'FREE',  badgeCls: 'badge-free',   label: 'Free space',      param: 'd = 0.60 m' },
+];
+
+EL_DATA.forEach(e => {
+  const row = document.createElement('div');
+  row.className = 'el-row';
+  row.innerHTML =
+    `<span class="el-badge ${e.badgeCls}">${e.badge}</span>` +
+    `<span class="el-label">${e.label}</span>` +
+    `<span class="el-param">${e.param}</span>`;
+  elContent.appendChild(row);
+});
+
+const addStrip = document.createElement('div');
+addStrip.className = 'add-strip';
+['+ Free', '+ Lens', '+ Mirror', '+ Interface'].forEach(lbl => {
+  const btn = document.createElement('button');
+  btn.className = 'add-btn';
+  btn.textContent = lbl;
+  addStrip.appendChild(btn);
+});
+elContent.appendChild(addStrip);
+
+// Section 2: Beam Parameters (editable)
+const { content: beamContent } = UI.addSection('sec-beam', 'Beam Parameters');
+
+const BEAM_PARAMS = [
+  { key: 'λ (nm)',  val: '1064' },
+  { key: 'w₀ (mm)', val: '1.00' },
+  { key: 'waist z', val: '0.00 m' },
+];
+
+BEAM_PARAMS.forEach(p => {
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  row.innerHTML = `<span class="param-key">${p.key}</span>`;
+  const inp = document.createElement('input');
+  inp.className = 'param-value';
+  inp.value = p.val;
+  row.appendChild(inp);
+  beamContent.appendChild(row);
+});
+
+// Section 3: Beam Info (read-only, updated after compute)
+const { content: infoContent } = UI.addSection('sec-info', 'Beam Info', false);
+
+function refreshInfo(meta, gaussian) {
+  infoContent.innerHTML = '';
+  const zR = rayleighRange(meta.w0, meta.lambda);
+  const rows = [
+    ['zR', `${zR.toFixed(3)} m`],
+    ['L',  `${meta.totalLength.toFixed(3)} m`],
+    ...gaussian.waists.map((w, i) => [
+      `waist ${i+1}`, `z=${(w.z*100).toFixed(1)}cm  w=${(w.w*1e6).toFixed(0)}µm`
+    ]),
+  ];
+  rows.forEach(([k, v]) => {
+    const row = document.createElement('div');
+    row.className = 'info-row';
+    row.innerHTML = `<span class="info-key">${k}</span><span class="info-val">${v}</span>`;
+    infoContent.appendChild(row);
+  });
+}
+
+// ── Hint overlay ────────────────────────────────────────────────────────────
+const hint = document.createElement('div');
+hint.id = 'hint';
+hint.innerHTML = 'Left-drag: rotate &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom';
+UI.viewport.appendChild(hint);
+
+// ── Start ─────────────────────────────────────────────────────────────────
+renderBeam();
+S.animate();
+</script>
+</body>
+</html>

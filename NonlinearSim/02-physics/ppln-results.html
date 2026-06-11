@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 5 — PPLN QPM Temperature Tuning</title>
+<style>
+  body  { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.4rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.6rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 12px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 12px 2px 0; }
+  .pass { color:#40cc70; } .fail { color:#e05050; }
+  .val  { color:#b0d0e8; } .note { color:#3a6050; font-size:0.7rem; }
+  canvas { display:block; margin:0.5rem 0 1rem; border:1px solid #1a3a2a; }
+  #summary { margin-top:1rem; font-size:0.82rem; }
+</style>
+</head>
+<body>
+<h1>Phase 5 — PPLN QPM Temperature Tuning Verification</h1>
+<p class="note">MgO:PPLN Gayer 2008 Sellmeier · eee process (d₃₃) · k = n/λ convention · Λ = 1/|Δk_free|</p>
+
+<script src="../01-crystals/ppln.js"></script>
+<script src="ppln-qpm.js"></script>
+
+<script>
+let pass = 0, fail = 0;
+
+function check(label, computed, expected, tol, unit = '') {
+  const ok = isFinite(computed) && Math.abs(computed - expected) <= tol;
+  ok ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="val">${isFinite(computed) ? computed.toFixed(4) : 'NaN'} ${unit}</td>
+    <td class="val">${expected.toFixed(4)} ${unit}</td>
+    <td class="val">${isFinite(computed) ? Math.abs(computed - expected).toFixed(4) : '—'}</td>
+    <td class="${ok?'pass':'fail'}">${ok?'✓':'✗'}</td>
+  </tr>`;
+}
+function hdr(u='') {
+  return `<tr><th>Check</th><th>Computed</th><th>Expected</th><th>Δ${u?(' ['+u+']')  :''}</th><th>OK</th></tr>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Refractive indices (sanity, Phase 1 re-check for PPLN)
+// ─────────────────────────────────────────────────────────────────────────────
+const h1 = document.createElement('h2');
+h1.textContent = '1. Refractive Index Sanity (Gayer 2008, T=25°C)';
+document.body.appendChild(h1);
+
+const ne1064 = PPLN.ne(1064e-9, 25);
+const ne532  = PPLN.ne(532e-9,  25);
+const no1064 = PPLN.no(1064e-9, 25);
+
+let rows = hdr();
+// Expected values from Phase 1 verification (Gayer 2008 5% MgO:CLN, T=25°C)
+// Note: no(1064nm)≈2.148 from Gayer 2008 code (PPLN QPM only uses ne via d33)
+rows += check('ne(1064nm, 25°C)', ne1064, 2.1554, 0.003, '');
+rows += check('ne(532nm,  25°C)', ne532,  2.2340, 0.003, '');
+rows += check('no(1064nm, 25°C)', no1064, 2.1483, 0.003, '');
+
+const t1 = document.createElement('table');
+t1.innerHTML = rows;
+document.body.appendChild(t1);
+
+const pDn = document.createElement('p');
+pDn.className = 'note';
+pDn.textContent = `Δn = ne(532) - ne(1064) = ${(ne532 - ne1064).toFixed(4)}  →  QPM period ≈ ${(1.064/(2*(ne532-ne1064))).toFixed(3)} µm`;
+document.body.appendChild(pDn);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. QPM period for SHG at various temperatures
+// ─────────────────────────────────────────────────────────────────────────────
+const h2 = document.createElement('h2');
+h2.textContent = '2. QPM Period for SHG 1064 → 532 nm  (eee, d₃₃)';
+document.body.appendChild(h2);
+
+const pNote2 = document.createElement('p');
+pNote2.className = 'note';
+pNote2.textContent = 'Period = 1 / |Δk_free|  where Δk_free = ne(λ/2)/(λ/2) – 2·ne(λ)/λ  [k = n/λ convention]';
+document.body.appendChild(pNote2);
+
+const temps2 = [25, 50, 100, 150, 200];
+let rows2 = '<tr><th>T (°C)</th><th>ne(532nm)</th><th>ne(1064nm)</th><th>Δn</th><th>Λ (µm)</th><th>Trend ↓ with T?</th></tr>';
+let prevPeriod = null;
+for (const T of temps2) {
+  const ne_s = PPLN.ne(532e-9,  T);
+  const ne_p = PPLN.ne(1064e-9, T);
+  const dn   = ne_s - ne_p;
+  const period = ppln_shg_period(1064, T);
+  const trend = prevPeriod === null ? '—' : (period < prevPeriod ? '<span class="pass">✓ ↓</span>' : '<span class="fail">✗ ↑</span>');
+  rows2 += `<tr>
+    <td class="val">${T}</td>
+    <td class="val">${ne_s.toFixed(5)}</td>
+    <td class="val">${ne_p.toFixed(5)}</td>
+    <td class="val">${dn.toFixed(5)}</td>
+    <td class="val">${period.toFixed(3)}</td>
+    <td>${trend}</td>
+  </tr>`;
+  prevPeriod = period;
+}
+const t2 = document.createElement('table');
+t2.innerHTML = rows2;
+document.body.appendChild(t2);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Self-consistency check: deltaK_SHG_QPM = 0 at the computed period
+// ─────────────────────────────────────────────────────────────────────────────
+const h3 = document.createElement('h2');
+h3.textContent = '3. Self-Consistency: ΔK_res = 0 at Computed Period';
+document.body.appendChild(h3);
+
+let rows3 = hdr('m⁻¹');
+for (const T of [25, 100, 200]) {
+  const period_um = ppln_shg_period(1064, T);
+  const dk_res = deltaK_SHG_QPM(1064e-9, period_um * 1e-6, T);
+  rows3 += check(`T=${T}°C, Λ=${period_um.toFixed(3)}µm → ΔK_res`, dk_res, 0, 1.0, 'm⁻¹');
+}
+const t3 = document.createElement('table');
+t3.innerHTML = rows3;
+document.body.appendChild(t3);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. Temperature tuning: fixed Λ₀ = ppln_shg_period(1064, 25), sweep T
+//    At T=25°C must recover pump=1064nm; as T↑ pump shifts to longer λ
+// ─────────────────────────────────────────────────────────────────────────────
+const Lambda0 = ppln_shg_period(1064, 25);
+
+const h4 = document.createElement('h2');
+h4.textContent = `4. Temp Tuning: Fixed Λ = ${Lambda0.toFixed(3)} µm  (anchored at T=25°C, pump=1064nm)`;
+document.body.appendChild(h4);
+
+const pNote4 = document.createElement('p');
+pNote4.className = 'note';
+pNote4.textContent = 'As T increases → Δn grows → need shorter Λ for same pump → fixed Λ phase-matches longer pump λ';
+document.body.appendChild(pNote4);
+
+const tuning4 = ppln_shg_temp_tuning(Lambda0, 20, 200, 37);
+
+let rows4 = hdr('nm');
+// T=25°C must give pump≈1064nm (tolerance 0.5nm)
+const pt25 = tuning4.find(r => Math.abs(r.T_C - 25) < 3);
+if (pt25) {
+  rows4 += check('T=25°C → pump λ ≈ 1064nm', pt25.lambda_pump_nm, 1064.0, 0.5, 'nm');
+}
+const t4 = document.createElement('table');
+t4.innerHTML = rows4;
+document.body.appendChild(t4);
+
+// Table: sample tuning points
+let rows4b = '<tr><th>T (°C)</th><th>λ_pump (nm)</th><th>λ_SH (nm)</th><th>Δλ/ΔT (nm/°C)</th></tr>';
+const step4 = Math.floor(tuning4.length / 8);
+for (let i = 0; i < tuning4.length; i += Math.max(1, step4)) {
+  const r = tuning4[i];
+  const dr = i > 0 ? (r.lambda_pump_nm - tuning4[i - Math.max(1, step4)].lambda_pump_nm)
+                   / (r.T_C - tuning4[i - Math.max(1, step4)].T_C) : null;
+  rows4b += `<tr>
+    <td class="val">${r.T_C.toFixed(0)}</td>
+    <td class="val">${r.lambda_pump_nm.toFixed(2)}</td>
+    <td class="val">${r.lambda_sh_nm.toFixed(2)}</td>
+    <td class="val">${dr !== null ? dr.toFixed(4) : '—'}</td>
+  </tr>`;
+}
+const t4b = document.createElement('table');
+t4b.innerHTML = rows4b;
+document.body.appendChild(t4b);
+
+// Canvas: λ_pump vs T
+const cv4 = document.createElement('canvas');
+cv4.width = 600; cv4.height = 240;
+document.body.appendChild(cv4);
+{
+  const ctx = cv4.getContext('2d');
+  const W = cv4.width, H = cv4.height, PAD = 50;
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+
+  const xs = tuning4.map(r => r.T_C);
+  const ys = tuning4.map(r => r.lambda_pump_nm);
+  if (ys.length) {
+    const xmin = xs[0], xmax = xs[xs.length-1];
+    const ymin = Math.min(...ys) - 1, ymax = Math.max(...ys) + 1;
+    const sx = (x) => PAD + (x - xmin) / (xmax - xmin) * (W - 2*PAD);
+    const sy = (y) => H - PAD - (y - ymin) / (ymax - ymin) * (H - 2*PAD);
+
+    // Axes
+    ctx.strokeStyle = '#2a4a3a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD, PAD); ctx.lineTo(PAD, H-PAD); ctx.lineTo(W-PAD, H-PAD); ctx.stroke();
+    ctx.fillStyle = '#5a8a7a'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Temperature (°C)', W/2, H - 8);
+    ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2);
+    ctx.fillText('λ_pump (nm)', 0, 0); ctx.restore();
+
+    // Tick labels
+    ctx.fillStyle = '#4a7060'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+    for (let T = Math.ceil(xmin/50)*50; T <= xmax; T += 50) {
+      const x = sx(T);
+      ctx.beginPath(); ctx.moveTo(x, H-PAD); ctx.lineTo(x, H-PAD+4); ctx.stroke();
+      ctx.fillText(T, x, H-PAD+14);
+    }
+    ctx.textAlign = 'right';
+    for (let y = Math.ceil(ymin/5)*5; y <= ymax; y += 5) {
+      const yp = sy(y);
+      ctx.beginPath(); ctx.moveTo(PAD, yp); ctx.lineTo(PAD-4, yp); ctx.stroke();
+      ctx.fillText(y.toFixed(0), PAD-6, yp+3);
+    }
+
+    // Line
+    ctx.strokeStyle = '#40cc70'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    tuning4.forEach((r, i) => {
+      const x = sx(r.T_C), y = sy(r.lambda_pump_nm);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Title
+    ctx.fillStyle = '#7ec8e3'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(`SHG pump tuning, Λ=${Lambda0.toFixed(2)}µm fixed`, PAD+4, PAD+14);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. PPLN OPO: pump=1064nm, period near-degenerate (≈32µm), temp tuning
+// ─────────────────────────────────────────────────────────────────────────────
+const Lambda_OPO = ppln_shg_period(2128, 25);  // degenerate OPO: pump=1064→signal=idler=2128nm
+// Note: ppln_shg_period with 2128nm pump gives Λ for SHG 2128→1064 (reverse),
+// but for OPO 1064→2128+2128 we need to compute directly:
+// Δk_OPO_degen = n_e(1064)/1064 - 2*n_e(2128)/2128  [k=n/λ]
+const ne_1064 = PPLN.ne(1064e-9, 25);
+const ne_2128 = PPLN.ne(2128e-9, 25);
+const dk_opo_degen = ne_1064/1064e-9 - 2*ne_2128/2128e-9;
+const Lambda_OPO_um = (Math.abs(dk_opo_degen) > 1e-12) ? 1.0/Math.abs(dk_opo_degen)*1e6 : NaN;
+
+const h5 = document.createElement('h2');
+h5.textContent = `5. PPLN OPO Temp Tuning: pump=1064nm, Λ=${Lambda_OPO_um.toFixed(1)}µm (degenerate at 25°C)`;
+document.body.appendChild(h5);
+
+const pNote5 = document.createElement('p');
+pNote5.className = 'note';
+pNote5.textContent = 'At T=25°C: signal≈idler≈2128nm (degenerate). As T changes, pair splits away from degeneracy.';
+document.body.appendChild(pNote5);
+
+const pump_nm = 1064;
+const opoData = ppln_opo_temp_tuning(pump_nm, Lambda_OPO_um, 20, 200, 73);
+
+// Verify: energy conservation holds for every found pair
+// (exact degeneracy at T=25°C is a numerical edge case — f(λ_s) flat near 2λ_p)
+let rows5 = hdr('nm');
+let ecFail = 0;
+for (const r of opoData) {
+  const inv_sum = 1/r.lambda_signal_nm + 1/r.lambda_idler_nm;
+  const inv_pump = 1/pump_nm;
+  if (Math.abs(inv_sum - inv_pump) / inv_pump > 1e-4) ecFail++;
+}
+const ecOk = ecFail === 0 && opoData.length > 0;
+ecOk ? pass++ : fail++;
+rows5 += `<tr>
+  <td class="val">Energy conservation for ${opoData.length} OPO pairs</td>
+  <td class="val">${ecFail} violations</td>
+  <td class="val">0</td>
+  <td class="val">${ecFail}</td>
+  <td class="${ecOk?'pass':'fail'}">${ecOk?'✓':'✗'}</td>
+</tr>`;
+// Signal always shorter than idler
+const orderOk = opoData.every(r => r.lambda_signal_nm <= r.lambda_idler_nm);
+orderOk ? pass++ : fail++;
+rows5 += `<tr>
+  <td class="val">Signal ≤ idler for all pairs</td>
+  <td class="val">${orderOk?'yes':'no'}</td>
+  <td class="val">yes</td><td></td>
+  <td class="${orderOk?'pass':'fail'}">${orderOk?'✓':'✗'}</td>
+</tr>`;
+// Note: near-degenerate T≈25°C skipped — f(λ_s) has no sign change at λ_s=2λ_p
+const t5 = document.createElement('table');
+t5.innerHTML = rows5;
+document.body.appendChild(t5);
+
+// OPO tuning table
+if (opoData.length > 0) {
+  let rows5b = '<tr><th>T (°C)</th><th>λ_signal (nm)</th><th>λ_idler (nm)</th></tr>';
+  const step5 = Math.max(1, Math.floor(opoData.length / 8));
+  for (let i = 0; i < opoData.length; i += step5) {
+    const r = opoData[i];
+    rows5b += `<tr>
+      <td class="val">${r.T_C.toFixed(0)}</td>
+      <td class="val">${r.lambda_signal_nm.toFixed(1)}</td>
+      <td class="val">${r.lambda_idler_nm.toFixed(1)}</td>
+    </tr>`;
+  }
+  const t5b = document.createElement('table');
+  t5b.innerHTML = rows5b;
+  document.body.appendChild(t5b);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Period scan: QPM period vs pump wavelength at T=25°C
+// ─────────────────────────────────────────────────────────────────────────────
+const h6 = document.createElement('h2');
+h6.textContent = '6. QPM Period vs Pump Wavelength (SHG, T=25°C)';
+document.body.appendChild(h6);
+
+const pumps6 = [800, 900, 1000, 1064, 1200, 1400, 1600, 2000, 2500, 3000];
+let rows6 = '<tr><th>λ_pump (nm)</th><th>λ_SH (nm)</th><th>ne(pump)</th><th>ne(SH)</th><th>Δn</th><th>Λ (µm)</th></tr>';
+for (const lp of pumps6) {
+  if (lp/2 < 400) continue;  // SH below transparency edge
+  const ls = lp / 2;
+  const nep = PPLN.ne(lp*1e-9, 25);
+  const nes = PPLN.ne(ls*1e-9, 25);
+  const period = ppln_shg_period(lp, 25);
+  rows6 += `<tr>
+    <td class="val">${lp}</td>
+    <td class="val">${ls}</td>
+    <td class="val">${nep.toFixed(5)}</td>
+    <td class="val">${nes.toFixed(5)}</td>
+    <td class="val">${(nes-nep).toFixed(5)}</td>
+    <td class="val">${period.toFixed(2)}</td>
+  </tr>`;
+}
+const t6 = document.createElement('table');
+t6.innerHTML = rows6;
+document.body.appendChild(t6);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Summary
+// ─────────────────────────────────────────────────────────────────────────────
+const div = document.createElement('div');
+div.id = 'summary';
+div.innerHTML = `<span class="${pass+fail>0&&fail===0?'pass':fail>0?'fail':'val'}">
+  ${pass} passed / ${fail} failed / ${pass+fail} total
+</span>`;
+document.body.appendChild(div);
+</script>
+</body>
+</html>

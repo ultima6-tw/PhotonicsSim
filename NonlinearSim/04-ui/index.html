@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NonlinearSim</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { overflow: hidden; }
+
+/* ── Input fields (match OpticSim exactly) ─────────────────────────── */
+.nl-label {
+  color: #4a7a9a; font-size: 0.7rem;
+  margin-bottom: 3px; display: block;
+}
+.nl-row { margin-bottom: 0.55rem; }
+.nl-input-group { display: flex; gap: 6px; align-items: center; }
+input[type="number"] {
+  background: #0a1520; border: 1px solid #1a2a3a;
+  color: #c0d0e0; font-family: monospace; font-size: 0.78rem;
+  padding: 0.25rem 0.4rem; border-radius: 3px; width: 100%;
+}
+input[type="number"]:focus {
+  outline: none; border-color: #2a5070; color: #cce8ff;
+}
+.unit { color: #3a6080; font-size: 0.7rem; min-width: 28px; }
+.presets { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.preset {
+  background: #080f18; border: 1px solid #1a2a3a;
+  color: #3a6080; font-family: monospace; font-size: 0.68rem;
+  padding: 1px 7px; border-radius: 3px; cursor: pointer;
+}
+.preset:hover { border-color: #2a5070; color: #7ec8e3; }
+.preset:active { background: #0e2030; border-color: #2a6090; }
+
+/* ── Crystal checkboxes ─────────────────────────────────────────────── */
+.crystal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.crystal-cb {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 0.75rem; color: #c0d0e0; cursor: pointer;
+}
+.crystal-cb input[type="checkbox"] { width: auto; accent-color: #2a5070; }
+
+/* ── Viewport: chart on top, table below ────────────────────────────── */
+#nl-viewport { display: flex; flex-direction: column; }
+
+#chart-area {
+  flex: 1.3; position: relative;
+  background: #0d1117; border-bottom: 1px solid #1a2a3a;
+}
+#chart-area canvas {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+}
+
+#results-area {
+  flex: 1; overflow-y: auto; background: #090d12;
+}
+
+/* ── Results table ──────────────────────────────────────────────────── */
+.results-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.72rem; font-family: monospace;
+}
+.results-table thead th {
+  color: #4a7a9a; text-align: left; font-weight: normal;
+  padding: 5px 8px; border-bottom: 1px solid #1a2a3a;
+  position: sticky; top: 0; background: #090d12; z-index: 1;
+}
+.results-table tbody tr { cursor: pointer; }
+.results-table tbody tr:hover td { background: #0d1a28; }
+.results-table tbody tr.selected td { background: #0e2438; color: #cce8ff; }
+.results-table tbody td {
+  padding: 3px 8px; border-bottom: 1px solid #0f1820; color: #b0c4d8;
+}
+
+/* Badges */
+.badge {
+  display: inline-block; padding: 1px 5px; border-radius: 2px;
+  font-size: 0.65rem; font-weight: bold; font-family: monospace;
+}
+.b-bbo  { background: #0e1e38; color: #7ec8e3; }
+.b-ktp  { background: #2a1a08; color: #e3c87e; }
+.b-lbo  { background: #082a14; color: #7ed87e; }
+.b-kdp  { background: #1a0a28; color: #c87ee3; }
+.b-ppln { background: #28102a; color: #e37ec8; }
+.b-shg  { background: #0d1a0e; color: #4a9a4a; }
+.b-opo  { background: #0d1020; color: #5a7ac8; }
+.b-qpm  { background: #1a200d; color: #8a9a4a; }
+
+.no-data {
+  padding: 1.5rem; text-align: center;
+  color: #2a4a6a; font-size: 0.8rem; font-family: monospace;
+}
+</style>
+</head>
+<body>
+
+<!-- OpticSim panel shell (shared component) -->
+<script src="../../OpticSim/03-ui/01-panel-shell/panel.js"></script>
+
+<!-- NonlinearSim physics stack -->
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="../02-physics/sellmeier.js"></script>
+<script src="../02-physics/phase-match.js"></script>
+<script src="../02-physics/opo-tuning.js"></script>
+<script src="../02-physics/ppln-qpm.js"></script>
+<script src="../02-physics/bk-focus.js"></script>
+<script src="../02-physics/efficiency.js"></script>
+<script src="../02-physics/deff.js"></script>
+<script src="../03-solver/solver.js"></script>
+
+<script>
+// ── Layout ────────────────────────────────────────────────────────────────────
+const ui = createPanelShell(document.body);
+ui.panel.querySelector('span').textContent = '⬡  NonlinearSim';
+
+// Override viewport to flex-column (chart + table)
+ui.viewport.id = 'nl-viewport';
+ui.viewport.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;';
+
+// ── Section: Parameters ───────────────────────────────────────────────────────
+const { content: pContent } = ui.addSection('params', 'Parameters');
+pContent.innerHTML = `
+<div class="nl-row">
+  <label class="nl-label">Pump λ</label>
+  <div class="nl-input-group">
+    <input id="inp-pump" type="number" value="1064" min="200" max="5000" step="1">
+    <span class="unit">nm</span>
+  </div>
+  <div class="presets">
+    <button class="preset" onclick="setVal('inp-pump',1064)">1064</button>
+    <button class="preset" onclick="setVal('inp-pump',800)">800</button>
+    <button class="preset" onclick="setVal('inp-pump',532)">532</button>
+    <button class="preset" onclick="setVal('inp-pump',355)">355</button>
+  </div>
+</div>
+<div class="nl-row">
+  <label class="nl-label">Target λ <span style="color:#243a50">(blank → SHG)</span></label>
+  <div class="nl-input-group">
+    <input id="inp-target" type="number" placeholder="auto" min="200" max="10000" step="1">
+    <span class="unit">nm</span>
+  </div>
+</div>
+<div class="nl-row">
+  <label class="nl-label">Crystal length L</label>
+  <div class="nl-input-group">
+    <input id="inp-L" type="number" value="10" min="0.5" max="100" step="0.5">
+    <span class="unit">mm</span>
+  </div>
+  <div class="presets">
+    <button class="preset" onclick="setVal('inp-L',5)">5</button>
+    <button class="preset" onclick="setVal('inp-L',10)">10</button>
+    <button class="preset" onclick="setVal('inp-L',20)">20</button>
+    <button class="preset" onclick="setVal('inp-L',30)">30</button>
+  </div>
+</div>
+<div class="nl-row">
+  <label class="nl-label">Beam radius w₀</label>
+  <div class="nl-input-group">
+    <input id="inp-w0" type="number" value="50" min="5" max="500" step="5">
+    <span class="unit">µm</span>
+  </div>
+  <div class="presets">
+    <button class="preset" onclick="setVal('inp-w0',20)">20</button>
+    <button class="preset" onclick="setVal('inp-w0',50)">50</button>
+    <button class="preset" onclick="setVal('inp-w0',100)">100</button>
+  </div>
+</div>
+<div class="nl-row">
+  <label class="nl-label">Power P</label>
+  <div class="nl-input-group">
+    <input id="inp-P" type="number" value="1" min="0.001" max="10000" step="0.1">
+    <span class="unit">W</span>
+  </div>
+  <div class="presets">
+    <button class="preset" onclick="setVal('inp-P',0.1)">0.1</button>
+    <button class="preset" onclick="setVal('inp-P',1)">1</button>
+    <button class="preset" onclick="setVal('inp-P',10)">10</button>
+    <button class="preset" onclick="setVal('inp-P',100)">100</button>
+  </div>
+</div>`;
+
+// ── Section: Crystals ─────────────────────────────────────────────────────────
+const { content: cContent } = ui.addSection('crystals', 'Crystals');
+cContent.innerHTML = `
+<div class="crystal-grid">
+  <label class="crystal-cb"><input type="checkbox" id="cb-bbo" checked> BBO</label>
+  <label class="crystal-cb"><input type="checkbox" id="cb-ktp" checked> KTP <span style="color:#2a4a6a;font-size:0.65rem">(biaxial)</span></label>
+  <label class="crystal-cb"><input type="checkbox" id="cb-lbo" checked> LBO <span style="color:#2a4a6a;font-size:0.65rem">(biaxial)</span></label>
+  <label class="crystal-cb"><input type="checkbox" id="cb-kdp" checked> KDP</label>
+  <label class="crystal-cb"><input type="checkbox" id="cb-ppln" checked> MgO:PPLN</label>
+</div>`;
+
+// ── Viewport content ──────────────────────────────────────────────────────────
+const chartDiv = _el('div', ''); chartDiv.id = 'chart-area';
+const canvas = document.createElement('canvas');
+chartDiv.appendChild(canvas);
+ui.viewport.appendChild(chartDiv);
+
+const tableDiv = _el('div', ''); tableDiv.id = 'results-area';
+tableDiv.innerHTML = '<div class="no-data">Enter pump wavelength and click  ▶ Compute</div>';
+ui.viewport.appendChild(tableDiv);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let _combos = [], _sel = -1;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function setVal(id, v)      { document.getElementById(id).value = v; }
+function getNum(id, def)    { const v = parseFloat(document.getElementById(id)?.value); return isNaN(v) ? def : v; }
+function getStr(id)         { return document.getElementById(id)?.value.trim() ?? ''; }
+
+function fmtEta(r) {
+  if (r.eta_pct == null) return '—';
+  return r.eta_pct < 0.001
+    ? r.eta_pct.toExponential(1) + '%'
+    : r.eta_pct.toFixed(3) + '%';
+}
+function fmtAngleOrPeriod(r) {
+  if (r.theta_pm_deg != null) return r.theta_pm_deg.toFixed(1) + '°';
+  if (r.period_um != null)    return r.period_um.toFixed(2) + ' µm';
+  return '—';
+}
+function fmtNm(nm) { return nm ? nm.toFixed(0) + ' nm' : '—'; }
+
+function crystalBadge(c) { return `<span class="badge b-${c}">${c.toUpperCase()}</span>`; }
+function procBadge(p, mt) {
+  if (mt === 'QPM') return `<span class="badge b-qpm">QPM</span>`;
+  if (p === 'SHG')  return `<span class="badge b-shg">SHG</span>`;
+  return `<span class="badge b-opo">OPO</span>`;
+}
+
+// ── Compute ───────────────────────────────────────────────────────────────────
+function runCompute() {
+  const pump_nm   = getNum('inp-pump', 1064);
+  const tgtStr    = getStr('inp-target');
+  const target_nm = tgtStr ? parseFloat(tgtStr) : pump_nm / 2;
+  const L_mm  = getNum('inp-L', 10);
+  const w0_um = getNum('inp-w0', 50);
+  const P_W   = getNum('inp-P', 1);
+
+  const enabled = ['bbo','ktp','lbo','kdp','ppln']
+    .filter(id => document.getElementById(`cb-${id}`)?.checked);
+
+  let res;
+  try {
+    res = NL.findCombinations({ target_nm, pump_nm, tol_nm: 10, L_mm, P_W, w0_um });
+  } catch (e) {
+    ui.setStats(`Error: ${e.message}`);
+    return;
+  }
+
+  _combos = (res.combinations || []).filter(c => enabled.includes(c.crystal));
+  _sel = -1;
+
+  renderTable();
+  chartMsg('Select a row to see the phase-matching chart');
+  ui.setStats(
+    `${_combos.length} combination${_combos.length !== 1 ? 's' : ''} found` +
+    `  ·  pump ${pump_nm} nm → target ${target_nm.toFixed(0)} nm` +
+    `  ·  L = ${L_mm} mm  w₀ = ${w0_um} µm  P = ${P_W} W`
+  );
+
+  if (_combos.length > 0) selectRow(0);
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+function renderTable() {
+  if (_combos.length === 0) {
+    tableDiv.innerHTML = '<div class="no-data">No phase-matching combinations found for these parameters</div>';
+    return;
+  }
+  let html = `<table class="results-table">
+<thead><tr>
+  <th>Crystal</th><th>Process</th><th>Type</th>
+  <th>θ / Λ</th><th>Output λ</th><th>η (P=1W)</th><th>Δλ (nm)</th>
+</tr></thead><tbody>`;
+
+  _combos.forEach((r, i) => {
+    const sel = i === _sel ? ' class="selected"' : '';
+    const outNm = r.process === 'OPO'
+      ? `${fmtNm(r.signal_nm)} / ${fmtNm(r.idler_nm)}`
+      : fmtNm(r.signal_nm);
+    html += `<tr${sel} onclick="selectRow(${i})">
+      <td>${crystalBadge(r.crystal)}</td>
+      <td>${procBadge(r.process, r.match_type)}</td>
+      <td style="color:#7a9ab8">${r.match_type}</td>
+      <td style="color:#c8d8a0">${fmtAngleOrPeriod(r)}</td>
+      <td style="color:#88b0c8">${outNm}</td>
+      <td style="color:#90c880">${fmtEta(r)}</td>
+      <td style="color:#6a8aaa">${r.bw_nm != null ? r.bw_nm.toFixed(2) : '—'}</td>
+    </tr>`;
+  });
+  tableDiv.innerHTML = html + '</tbody></table>';
+}
+
+function selectRow(idx) {
+  _sel = idx;
+  renderTable();
+  const r = _combos[idx];
+  if (!r) return;
+
+  let stat = `${r.crystal_label}  ${r.match_type}  ${r.process}`;
+  if (r.theta_pm_deg != null) stat += `   θ = ${r.theta_pm_deg.toFixed(1)}°`;
+  if (r.period_um    != null) stat += `   Λ = ${r.period_um.toFixed(2)} µm`;
+  if (r.eta_pct      != null) stat += `   η = ${fmtEta(r)}`;
+  if (r.bw_nm        != null) stat += `   Δλ = ${r.bw_nm.toFixed(2)} nm`;
+  if (r.walk_off_mrad!= null && r.walk_off_mrad > 0)
+    stat += `   ρ = ${r.walk_off_mrad.toFixed(2)} mrad`;
+  ui.setStats(stat);
+
+  updateChart(r);
+}
+
+// ── Chart helpers ─────────────────────────────────────────────────────────────
+function resizeCanvas() {
+  canvas.width  = chartDiv.offsetWidth  || 600;
+  canvas.height = chartDiv.offsetHeight || 300;
+}
+
+function chartMsg(msg) {
+  resizeCanvas();
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#2a4a6a';
+  ctx.font = '13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(msg, canvas.width / 2, canvas.height / 2);
+}
+
+function _px(v, lo, hi, pxLo, pxHi) {
+  return lo === hi ? (pxLo + pxHi) / 2 : pxLo + (v - lo) / (hi - lo) * (pxHi - pxLo);
+}
+
+function _fmtTick(v, dec) {
+  const a = Math.abs(v);
+  if (a >= 1e6 || (a > 0 && a < 0.01)) return v.toExponential(1);
+  return v.toFixed(dec ?? 0);
+}
+
+function drawGrid(ctx, M, cW, cH) {
+  ctx.strokeStyle = '#1a2a3a'; ctx.lineWidth = 1; ctx.setLineDash([3, 6]);
+  for (let i = 1; i < 5; i++) {
+    const x = M.left + i * cW / 5;
+    ctx.beginPath(); ctx.moveTo(x, M.top); ctx.lineTo(x, M.top + cH); ctx.stroke();
+  }
+  for (let i = 1; i < 4; i++) {
+    const y = M.top + i * cH / 4;
+    ctx.beginPath(); ctx.moveTo(M.left, y); ctx.lineTo(M.left + cW, y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+function drawAxes(ctx, M, cW, cH, xMin, xMax, yMin, yMax, xLabel, yLabel, xDec, yDec) {
+  drawGrid(ctx, M, cW, cH);
+  // Axis lines
+  ctx.strokeStyle = '#2a4a6a'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(M.left, M.top); ctx.lineTo(M.left, M.top + cH);
+  ctx.moveTo(M.left, M.top + cH); ctx.lineTo(M.left + cW, M.top + cH);
+  ctx.stroke();
+  // X tick labels
+  ctx.fillStyle = '#3a6a8a'; ctx.font = '10px monospace';
+  for (let i = 0; i <= 5; i++) {
+    const v = xMin + i * (xMax - xMin) / 5;
+    const x = M.left + i * cW / 5;
+    ctx.textAlign = 'center';
+    ctx.fillText(_fmtTick(v, xDec), x, M.top + cH + 13);
+  }
+  // Y tick labels
+  for (let i = 0; i <= 4; i++) {
+    const v = yMax - i * (yMax - yMin) / 4;
+    const y = M.top + i * cH / 4;
+    ctx.textAlign = 'right';
+    ctx.fillText(_fmtTick(v, yDec), M.left - 5, y + 3);
+  }
+  // Axis labels
+  ctx.fillStyle = '#4a7a9a'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(xLabel, M.left + cW / 2, M.top + cH + 30);
+  ctx.save(); ctx.translate(13, M.top + cH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yLabel, 0, 0); ctx.restore();
+}
+
+function drawPolyline(ctx, pts, xKey, yKey, xMin, xMax, yMin, yMax, M, cW, cH, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+  let pen = false;
+  for (const p of pts) {
+    const v = p[yKey];
+    if (!isFinite(v)) { pen = false; continue; }
+    const x = _px(p[xKey], xMin, xMax, M.left, M.left + cW);
+    const y = _px(v,        yMin, yMax, M.top + cH, M.top);
+    pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    pen = true;
+  }
+  ctx.stroke();
+}
+
+function vLine(ctx, xVal, xMin, xMax, M, cW, cH, color, label) {
+  const x = _px(xVal, xMin, xMax, M.left, M.left + cW);
+  ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(x, M.top); ctx.lineTo(x, M.top + cH); ctx.stroke();
+  ctx.setLineDash([]);
+  if (label) {
+    ctx.fillStyle = color; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(label, x + 4, M.top + 14);
+  }
+  return x;
+}
+
+function dot(ctx, x, y, color, r) {
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r ?? 4, 0, 2 * Math.PI); ctx.fill();
+}
+
+function chartTitle(ctx, M, text) {
+  ctx.fillStyle = '#4a7a9a'; ctx.font = '11px monospace';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(text, M.left, M.top - 16);
+}
+
+// ── Chart dispatch ────────────────────────────────────────────────────────────
+function updateChart(r) {
+  resizeCanvas();
+  if (r.process === 'OPO') {
+    drawOPOChart(r);
+  } else if (r.crystal === 'ppln') {
+    drawPPLNChart(r);
+  } else {
+    drawSHGDeltaKChart(r);
+  }
+}
+
+// ── OPO tuning curve: λ_s, λ_i vs θ ─────────────────────────────────────────
+function drawOPOChart(r) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const M = { top: 30, right: 25, bottom: 42, left: 62 };
+  const cW = W - M.left - M.right, cH = H - M.top - M.bottom;
+
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+
+  const type  = r.match_type === 'Type-I' ? 'I' : 'II';
+  const curve = NL.getTuningCurve({
+    crystal: r.crystal, type, pump_nm: r.pump_nm,
+    theta_min: 5, theta_max: 70, n_pts: 300,
+  });
+
+  if (!curve || curve.length === 0) {
+    ctx.fillStyle = '#3a5a6a'; ctx.font = '13px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('No OPO solutions in this angle range', W / 2, H / 2);
+    return;
+  }
+
+  const thetas = curve.map(p => p.theta_deg);
+  const sigs   = curve.map(p => p.lambda_s_nm);
+  const idls   = curve.map(p => p.lambda_i_nm);
+
+  const xMin = Math.min(...thetas), xMax = Math.max(...thetas);
+  const yMin = 200;
+  const yMax = Math.min(5000, Math.max(...idls.filter(v => v < 6000)) * 1.05);
+
+  // Clip idler at yMax
+  const idlPts = curve.map(p => ({
+    theta_deg: p.theta_deg,
+    lambda_i_nm: p.lambda_i_nm <= yMax ? p.lambda_i_nm : null,
+  }));
+
+  drawAxes(ctx, M, cW, cH, xMin, xMax, yMin, yMax, 'θ  [deg]', 'λ  [nm]', 1, 0);
+  drawPolyline(ctx, curve,  'theta_deg', 'lambda_s_nm', xMin, xMax, yMin, yMax, M, cW, cH, '#7ec8e3');
+  drawPolyline(ctx, idlPts, 'theta_deg', 'lambda_i_nm', xMin, xMax, yMin, yMax, M, cW, cH, '#e3c87e');
+
+  if (r.theta_pm_deg != null) {
+    vLine(ctx, r.theta_pm_deg, xMin, xMax, M, cW, cH, '#40cc70', `${r.theta_pm_deg.toFixed(1)}°`);
+  }
+
+  // Legend
+  ctx.font = '11px monospace'; ctx.textBaseline = 'top';
+  ctx.fillStyle = '#7ec8e3'; ctx.textAlign = 'right';
+  ctx.fillText('— signal', M.left + cW - 2, M.top + 4);
+  ctx.fillStyle = '#e3c87e';
+  ctx.fillText('— idler', M.left + cW - 2, M.top + 18);
+
+  chartTitle(ctx, M, `${r.crystal_label}  ${r.match_type}  OPO   pump = ${r.pump_nm} nm`);
+}
+
+// ── PPLN temp tuning: λ_pump(T) for fixed period ─────────────────────────────
+function drawPPLNChart(r) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const M = { top: 30, right: 25, bottom: 42, left: 68 };
+  const cW = W - M.left - M.right, cH = H - M.top - M.bottom;
+
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+
+  let data;
+  try { data = ppln_shg_temp_tuning(r.period_um, -10, 130, 200); } catch (_) { return; }
+  if (!data || data.length === 0) return;
+
+  const temps = data.map(p => p.T_C);
+  const pumps = data.map(p => p.lambda_pump_nm);
+  const xMin = Math.min(...temps), xMax = Math.max(...temps);
+  const span = Math.max(...pumps) - Math.min(...pumps);
+  const yMin = Math.min(...pumps) - span * 0.15;
+  const yMax = Math.max(...pumps) + span * 0.15;
+
+  drawAxes(ctx, M, cW, cH, xMin, xMax, yMin, yMax, 'T  [°C]', 'λ_pump  [nm]', 0, 1);
+  drawPolyline(ctx, data, 'T_C', 'lambda_pump_nm', xMin, xMax, yMin, yMax, M, cW, cH, '#7ec8e3');
+
+  if (r.T_C != null) {
+    const x = vLine(ctx, r.T_C, xMin, xMax, M, cW, cH, '#40cc70', `${r.T_C}°C`);
+    const y = _px(r.pump_nm, yMin, yMax, M.top + cH, M.top);
+    dot(ctx, x, y, '#40cc70', 4);
+  }
+
+  chartTitle(ctx, M, `MgO:PPLN QPM   Λ = ${r.period_um.toFixed(2)} µm   (pump λ at phase match vs T)`);
+}
+
+// ── SHG birefringent: Δk vs θ ────────────────────────────────────────────────
+function drawSHGDeltaKChart(r) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const M = { top: 30, right: 25, bottom: 42, left: 72 };
+  const cW = W - M.left - M.right, cH = H - M.top - M.bottom;
+
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+
+  const crystal = getCrystal(r.crystal);
+  if (!crystal) return;
+
+  const type = r.match_type === 'Type-I' ? 'I' : 'II';
+  const lp = r.pump_nm * 1e-9;
+  const DEG = Math.PI / 180;
+
+  const pts = [];
+  for (let t = 5; t <= 85; t += 0.5) {
+    try {
+      const dk = type === 'I'
+        ? deltaK_typeI(t * DEG, lp, crystal)
+        : deltaK_typeII(t * DEG, lp, crystal);
+      if (isFinite(dk)) pts.push({ theta: t, dk });
+    } catch (_) {}
+  }
+  if (pts.length === 0) {
+    chartMsg('No Δk data available'); return;
+  }
+
+  const xMin = 5, xMax = 85;
+  const dkMax = Math.max(...pts.map(p => Math.abs(p.dk))) * 1.05;
+  const yMin = -dkMax, yMax = dkMax;
+
+  drawAxes(ctx, M, cW, cH, xMin, xMax, yMin, yMax, 'θ  [deg]', 'Δk  [rad/m]', 0, 0);
+
+  // Δk = 0 reference line
+  const y0 = _px(0, yMin, yMax, M.top + cH, M.top);
+  ctx.strokeStyle = '#2a4a2a'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(M.left, y0); ctx.lineTo(M.left + cW, y0); ctx.stroke();
+  ctx.fillStyle = '#2a4a2a'; ctx.font = '10px monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText('Δk=0', M.left - 5, y0);
+
+  // Δk curve
+  drawPolyline(ctx, pts, 'theta', 'dk', xMin, xMax, yMin, yMax, M, cW, cH, '#7ec8e3');
+
+  // PM angle marker
+  if (r.theta_pm_deg != null) {
+    const x = vLine(ctx, r.theta_pm_deg, xMin, xMax, M, cW, cH, '#40cc70',
+      `θ_PM = ${r.theta_pm_deg.toFixed(1)}°`);
+    dot(ctx, x, y0, '#40cc70', 5);
+  }
+
+  chartTitle(ctx, M, `${r.crystal_label}  ${r.match_type}  SHG   pump = ${r.pump_nm} nm`);
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────────
+ui.computeBtn.addEventListener('click', runCompute);
+document.addEventListener('keydown', e => { if (e.key === 'Enter') runCompute(); });
+window.addEventListener('resize', () => {
+  if (_sel >= 0 && _combos[_sel]) updateChart(_combos[_sel]);
+  else chartMsg('Enter pump wavelength and click  ▶ Compute');
+});
+
+// Initial state
+chartMsg('Enter pump wavelength and click  ▶ Compute');
+</script>
+</body>
+</html>

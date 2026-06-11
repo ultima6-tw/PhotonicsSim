@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 6 — SHG Efficiency & Acceptance Bandwidth</title>
+<style>
+  body  { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.4rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.6rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 12px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 12px 2px 0; }
+  .pass { color:#40cc70; } .fail { color:#e05050; }
+  .val  { color:#b0d0e8; } .note { color:#3a6050; font-size:0.7rem; }
+  #summary { margin-top:1rem; font-size:0.82rem; }
+</style>
+</head>
+<body>
+<h1>Phase 6 — SHG Efficiency & Acceptance Bandwidth Verification</h1>
+<p class="note">Formula: η = 2ω² d_eff² L² P / (n_pump² n_sh c³ ε₀ A),  A = π w₀²  (undepleted pump, CW, plane wave at Δk=0)</p>
+
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+<script src="efficiency.js"></script>
+
+<script>
+const DEG = Math.PI / 180;
+let pass = 0, fail = 0;
+
+function ok(label, condition) {
+  condition ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="${condition?'pass':'fail'}">${condition?'✓':'✗'}</td>
+  </tr>`;
+}
+function hdr(...cols) {
+  return '<tr>' + cols.map(c=>`<th>${c}</th>`).join('') + '</tr>';
+}
+
+// ── Crystal objects & PM angles from Phase 3 ─────────────────────────────────
+const bbo = getCrystal('bbo');
+const ktp = getCrystal('ktp');
+const lbo = getCrystal('lbo');
+const kdp = getCrystal('kdp');
+
+// BBO type-I 1064nm PM: θ_pm ≈ 22.8°
+const theta_bbo_I_1064 = 22.8;
+// BBO type-I 532nm PM (SHG 532→266nm): θ ≈ 49°
+const theta_bbo_I_532  = 49.0;
+// KDP type-I 1064nm PM: θ ≈ 30.3° (Nikogosyan 2005 Sellmeier)
+const theta_kdp_I_1064 = 30.3;
+
+// Phase-matched refractive indices (at exact PM: n_sh = n_pump)
+const n_bbo_1064 = bbo.n(1064e-9, 'o');   // ≈1.655 (no at pump = ne_eff at SH at PM)
+const n_bbo_532  = neEff(theta_bbo_I_1064 * DEG, 532e-9, bbo);  // should ≈ n_bbo_1064
+const n_kdp_1064 = kdp.n(1064e-9, 'o');
+const n_kdp_532  = neEff(theta_kdp_I_1064 * DEG, 532e-9, kdp);
+
+// KTP: biaxial, type-II; use nx(pump) and nz(SH) as effective indices
+const n_ktp_pump = ktp.n(1064e-9, 'y');   // ordinary-like for type-II
+const n_ktp_sh   = ktp.n(532e-9,  'z');   // SH z-polarised
+
+// PPLN: extraordinary only (eee process)
+const n_ppln_pump = PPLN.ne(1064e-9, 25);
+const n_ppln_sh   = PPLN.ne(532e-9,  25);
+
+// ── 1. Basic efficiencies ─────────────────────────────────────────────────────
+const h1 = document.createElement('h2');
+h1.textContent = '1. Single-Pass Efficiency (undepleted pump, CW, plane wave)';
+document.body.appendChild(h1);
+
+const p1 = document.createElement('p');
+p1.className = 'note';
+p1.textContent = 'Low values expected for CW at moderate power — spec estimates (0.5-2% KTP, 0.1% BBO) assumed pulsed/cavity-enhanced conditions';
+document.body.appendChild(p1);
+
+const configs = [
+  { label:'BBO type-I, 1064nm, L=10mm, w₀=50µm, P=100mW',
+    d:DEFF_TABLE.bbo.typeI_1064, lp:1064, np:n_bbo_1064, ns:n_bbo_532, L:10, P:0.1, w0:50 },
+  { label:'KTP type-II, 1064nm, L=10mm, w₀=50µm, P=1W',
+    d:DEFF_TABLE.ktp.typeII_1064, lp:1064, np:n_ktp_pump, ns:n_ktp_sh, L:10, P:1, w0:50 },
+  { label:'KDP type-I, 1064nm, L=10mm, w₀=50µm, P=1W',
+    d:DEFF_TABLE.kdp.typeI_1064, lp:1064, np:n_kdp_1064, ns:n_kdp_532, L:10, P:1, w0:50 },
+  { label:'PPLN (MgO:LiNbO₃), 1064nm, L=10mm, w₀=50µm, P=1W',
+    d:DEFF_TABLE.ppln.shg_1064, lp:1064, np:n_ppln_pump, ns:n_ppln_sh, L:10, P:1, w0:50 },
+  { label:'BBO type-I, 1064nm, L=20mm, w₀=50µm, P=100mW  (L² check)',
+    d:DEFF_TABLE.bbo.typeI_1064, lp:1064, np:n_bbo_1064, ns:n_bbo_532, L:20, P:0.1, w0:50 },
+  { label:'BBO type-I, 1064nm, L=10mm, w₀=25µm, P=100mW  (w₀ check)',
+    d:DEFF_TABLE.bbo.typeI_1064, lp:1064, np:n_bbo_1064, ns:n_bbo_532, L:10, P:0.1, w0:25 },
+];
+
+const etas = configs.map(c => shg_efficiency(c.d, c.lp, c.np, c.ns, c.L, c.P, c.w0));
+
+let rows1 = hdr('Configuration', 'd_eff (pm/V)', 'η (%)', 'Γ (%/W)');
+configs.forEach((c, i) => {
+  const eta_pct = (etas[i] * 100).toExponential(3);
+  const gamma   = (shg_gamma(c.d, c.lp, c.np, c.ns, c.L, c.w0) * 100).toExponential(3);
+  rows1 += `<tr>
+    <td class="val">${c.label}</td>
+    <td class="val">${c.d.toFixed(2)}</td>
+    <td class="val">${eta_pct}</td>
+    <td class="val">${gamma}</td>
+  </tr>`;
+});
+const t1 = document.createElement('table');
+t1.innerHTML = rows1;
+document.body.appendChild(t1);
+
+// ── 2. Physical sanity checks ─────────────────────────────────────────────────
+const h2 = document.createElement('h2');
+h2.textContent = '2. Physical Sanity Checks';
+document.body.appendChild(h2);
+
+let rows2 = hdr('Check', 'OK');
+
+// η > 0 for all configs
+rows2 += ok('All efficiencies > 0', etas.every(e => e > 0));
+// η << 1 (undepleted regime valid for these parameters)
+rows2 += ok('All efficiencies < 50% (undepleted regime)', etas.every(e => e < 0.5));
+
+// PPLN >> BBO (d_eff advantage: (17.2/2.0)² ≈ 74×, but P and n also differ)
+const eta_ppln = etas[3];
+const eta_bbo  = etas[0] / 0.1;  // scale BBO to 1W for fair comparison
+// ratio = (d_ppln/d_bbo)² × (n_bbo²·n_bbo_sh)/(n_ppln²·n_ppln_sh) ≈ 73.96 × 0.437 ≈ 32×
+rows2 += ok(`PPLN η(1W) > 20× BBO η(1W)  [d_eff ratio 17/2: ~73×, n³ correction: ~0.44×, net ~32×]`,
+            eta_ppln > 20 * eta_bbo);
+
+// KDP lower than BBO (d_eff: 0.24 vs 2.0 pm/V → ratio 0.014×)
+// At 1W, same geometry: η_kdp/η_bbo ≈ (0.24/2.0)² = 0.0144
+rows2 += ok('KDP η(1W) < BBO η(1W) [d_eff 0.24 vs 2.0 pm/V]',
+            etas[2] < etas[0] / 0.1);  // BBO scaled to 1W
+
+// L² scaling: doubling L → 4× η
+const eta_10mm = etas[0];
+const eta_20mm = etas[4];
+const ratio_L  = eta_20mm / eta_10mm;
+rows2 += ok(`L² scaling: η(20mm)/η(10mm) = ${ratio_L.toFixed(2)} ≈ 4.0`,
+            Math.abs(ratio_L - 4.0) < 0.01);
+
+// w₀ scaling: halving w₀ → 4× η (I ∝ 1/w₀²)
+const eta_50um = etas[0];
+const eta_25um = etas[5];
+const ratio_w0 = eta_25um / eta_50um;
+rows2 += ok(`1/w₀² scaling: η(25µm)/η(50µm) = ${ratio_w0.toFixed(2)} ≈ 4.0`,
+            Math.abs(ratio_w0 - 4.0) < 0.01);
+
+// d_eff² scaling: check KTP vs BBO (both at 1W, but different P, need to normalise)
+// η ∝ d_eff² × P → Γ = η/P ∝ d_eff²
+const gamma_bbo = shg_gamma(DEFF_TABLE.bbo.typeI_1064, 1064, n_bbo_1064, n_bbo_532, 10, 50);
+const gamma_ktp = shg_gamma(DEFF_TABLE.ktp.typeII_1064, 1064, n_ktp_pump, n_ktp_sh, 10, 50);
+const d_ratio2  = (DEFF_TABLE.ktp.typeII_1064 / DEFF_TABLE.bbo.typeI_1064) ** 2;
+// account for n² difference: Γ ∝ d²/(n_p² n_sh)
+const n_ratio   = (n_bbo_1064**2 * n_bbo_532) / (n_ktp_pump**2 * n_ktp_sh);
+const pred_ratio = d_ratio2 * n_ratio;
+const actual_ratio = gamma_ktp / gamma_bbo;
+rows2 += ok(`Γ(KTP)/Γ(BBO) = ${actual_ratio.toFixed(2)}, predicted from d²/n³ = ${pred_ratio.toFixed(2)} (±5%)`,
+            Math.abs(actual_ratio/pred_ratio - 1) < 0.05);
+
+const t2 = document.createElement('table');
+t2.innerHTML = rows2;
+document.body.appendChild(t2);
+
+// ── 3. Spectral acceptance bandwidth ─────────────────────────────────────────
+const h3 = document.createElement('h2');
+h3.textContent = '3. Spectral Acceptance Bandwidth (FWHM)';
+document.body.appendChild(h3);
+
+const p3 = document.createElement('p');
+p3.className = 'note';
+p3.textContent = 'Δλ_FWHM = 2.78/(L·|d(Δk)/dλ|)  — critically phase-matched crystals have narrow bandwidth';
+document.body.appendChild(p3);
+
+const bw_specs = [
+  { crystal:bbo, type:'I',  theta:theta_bbo_I_1064, lp:1064, L:10,  label:'BBO type-I, 1064nm, L=10mm' },
+  { crystal:bbo, type:'I',  theta:theta_bbo_I_1064, lp:1064, L:5,   label:'BBO type-I, 1064nm, L=5mm' },
+  { crystal:kdp, type:'I',  theta:theta_kdp_I_1064, lp:1064, L:10,  label:'KDP type-I, 1064nm, L=10mm' },
+];
+
+const bws  = bw_specs.map(s => spectral_bw_shg(s.theta, s.lp, s.crystal, s.L, s.type));
+const dbws = bw_specs.map((s, i) => ({ ...s, dlambda: bws[i] }));
+
+let rows3 = hdr('Configuration', 'Δλ_FWHM (nm)', 'Δλ × L (nm·mm)', 'In range?');
+let rows3b = hdr('Check', 'OK');
+dbws.forEach((s, i) => {
+  const bw = bws[i];
+  const bwL = bw * s.L;
+  const inRange = bw > 0 && bw < 100;
+  rows3 += `<tr>
+    <td class="val">${s.label}</td>
+    <td class="val">${isFinite(bw) ? bw.toFixed(3) : '∞'}</td>
+    <td class="val">${isFinite(bwL) ? bwL.toFixed(3) : '∞'}</td>
+    <td class="${inRange?'pass':'fail'}">${inRange?'✓':'✗'}</td>
+  </tr>`;
+  inRange ? pass++ : fail++;
+});
+
+// L-scaling of bandwidth: Δλ ∝ 1/L → BBO 5mm should be 2× the 10mm bandwidth
+const bw_10mm = bws[0], bw_5mm = bws[1];
+const bw_L_ratio = bw_5mm / bw_10mm;
+rows3b += ok(`Δλ(5mm)/Δλ(10mm) = ${bw_L_ratio.toFixed(2)} ≈ 2.0  (1/L scaling)`,
+             Math.abs(bw_L_ratio - 2.0) < 0.05);
+
+const t3  = document.createElement('table');
+t3.innerHTML = rows3;
+document.body.appendChild(t3);
+const t3b = document.createElement('table');
+t3b.innerHTML = rows3b;
+document.body.appendChild(t3b);
+
+// ── 4. Angular acceptance bandwidth ──────────────────────────────────────────
+const h4 = document.createElement('h2');
+h4.textContent = '4. Angular Acceptance Bandwidth (FWHM)';
+document.body.appendChild(h4);
+
+const ang_specs = [
+  { crystal:bbo, type:'I',  theta:theta_bbo_I_1064, lp:1064, L:10, label:'BBO type-I, 1064nm, L=10mm' },
+  { crystal:bbo, type:'I',  theta:theta_bbo_I_1064, lp:1064, L:5,  label:'BBO type-I, 1064nm, L=5mm' },
+  { crystal:kdp, type:'I',  theta:theta_kdp_I_1064, lp:1064, L:10, label:'KDP type-I, 1064nm, L=10mm' },
+];
+
+const abws = ang_specs.map(s => angular_bw_shg(s.theta, s.lp, s.crystal, s.L, s.type));
+
+let rows4 = hdr('Configuration', 'Δθ_FWHM (mrad)', 'Δθ × L (mrad·mm)', 'In range?');
+let rows4b = hdr('Check', 'OK');
+ang_specs.forEach((s, i) => {
+  const bw = abws[i];
+  const bwL = bw * s.L;
+  const inRange = bw > 0 && bw < 500;
+  rows4 += `<tr>
+    <td class="val">${s.label}</td>
+    <td class="val">${isFinite(bw) ? bw.toFixed(3) : '∞'}</td>
+    <td class="val">${isFinite(bwL) ? bwL.toFixed(2) : '∞'}</td>
+    <td class="${inRange?'pass':'fail'}">${inRange?'✓':'✗'}</td>
+  </tr>`;
+  inRange ? pass++ : fail++;
+});
+
+// 1/L scaling: BBO Δθ(5mm)/Δθ(10mm) ≈ 2.0
+const at_10mm = abws[0], at_5mm = abws[1];
+const at_ratio = at_5mm / at_10mm;
+rows4b += ok(`Δθ(5mm)/Δθ(10mm) = ${at_ratio.toFixed(2)} ≈ 2.0  (1/L scaling)`,
+             Math.abs(at_ratio - 2.0) < 0.05);
+
+const t4  = document.createElement('table');
+t4.innerHTML = rows4;
+document.body.appendChild(t4);
+const t4b = document.createElement('table');
+t4b.innerHTML = rows4b;
+document.body.appendChild(t4b);
+
+// ── 5. Normalised efficiency comparison across crystals ───────────────────────
+const h5 = document.createElement('h2');
+h5.textContent = '5. Normalised Efficiency Γ [%/W] at L=10mm, w₀=50µm, T=25°C';
+document.body.appendChild(h5);
+
+const crystals5 = [
+  { id:'BBO type-I',  d:DEFF_TABLE.bbo.typeI_1064,  np:n_bbo_1064, ns:n_bbo_532  },
+  { id:'KTP type-II', d:DEFF_TABLE.ktp.typeII_1064, np:n_ktp_pump, ns:n_ktp_sh   },
+  { id:'KDP type-I',  d:DEFF_TABLE.kdp.typeI_1064,  np:n_kdp_1064, ns:n_kdp_532  },
+  { id:'PPLN (QPM)',  d:DEFF_TABLE.ppln.shg_1064,   np:n_ppln_pump,ns:n_ppln_sh  },
+];
+
+let rows5 = hdr('Crystal', 'd_eff (pm/V)', 'n_pump', 'n_SH', 'Γ (%/W)', 'Rank');
+const gammas5 = crystals5.map(c => shg_gamma(c.d, 1064, c.np, c.ns, 10, 50) * 100);
+const sorted5 = [...gammas5].sort((a,b)=>b-a);
+crystals5.forEach((c, i) => {
+  rows5 += `<tr>
+    <td class="val">${c.id}</td>
+    <td class="val">${c.d.toFixed(2)}</td>
+    <td class="val">${c.np.toFixed(4)}</td>
+    <td class="val">${c.ns.toFixed(4)}</td>
+    <td class="val">${gammas5[i].toExponential(3)}</td>
+    <td class="val">${sorted5.indexOf(gammas5[i])+1}</td>
+  </tr>`;
+});
+const t5 = document.createElement('table');
+t5.innerHTML = rows5;
+document.body.appendChild(t5);
+
+// Ranking check: PPLN > KTP > BBO > KDP
+const rank_ok = gammas5[3] > gammas5[1] && gammas5[1] > gammas5[0] && gammas5[0] > gammas5[2];
+const t5b = document.createElement('table');
+let rows5b = hdr('Check', 'OK');
+rows5b += ok('Ranking: PPLN > KTP > BBO > KDP  (d_eff driven)', rank_ok);
+t5b.innerHTML = rows5b;
+document.body.appendChild(t5b);
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+const divSum = document.createElement('div');
+divSum.id = 'summary';
+divSum.innerHTML = `<span class="${fail===0?'pass':'fail'}">${pass} passed / ${fail} failed / ${pass+fail} total</span>`;
+document.body.appendChild(divSum);
+</script>
+</body>
+</html>

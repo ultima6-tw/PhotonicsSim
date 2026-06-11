@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>03-rays demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+  #viewport { width: 100vw; height: 100vh; }
+  #overlay {
+    position: fixed; top: 1rem; left: 1rem;
+    background: rgba(13,17,23,0.85); border: 1px solid #2a4a6a;
+    padding: 0.8rem 1.1rem; border-radius: 6px; font-size: 0.78rem; line-height: 1.8;
+    pointer-events: none; min-width: 240px;
+  }
+  #overlay h3 { color: #7ec8e3; margin-bottom: 0.3rem; font-size: 0.85rem; }
+  .dim { color: #5a7a9a; }
+  .hi  { color: #7ed87e; }
+  #hint {
+    position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(13,17,23,0.7); border: 1px solid #2a3a4a;
+    padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.72rem; color: #4a6a8a;
+    pointer-events: none;
+  }
+  #controls {
+    position: fixed; top: 1rem; right: 1rem;
+    background: rgba(13,17,23,0.85); border: 1px solid #2a4a6a;
+    padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.78rem; line-height: 2;
+  }
+  #controls label { color: #7ec8e3; display: flex; align-items: center; gap: 0.5rem; }
+  #controls input[type=range] { width: 100px; accent-color: #7ec8e3; }
+</style>
+</head>
+<body>
+<div id="viewport"></div>
+
+<div id="overlay">
+  <h3>03-rays — Geometric Ray Lines</h3>
+  <div class="dim">System: <span id="sys">—</span></div>
+  <div class="dim">Rays: <span id="rinfo">—</span></div>
+  <div class="hi">Focus: <span id="focus">—</span></div>
+</div>
+
+<div id="controls">
+  <label>Azimuthal planes
+    <input type="range" id="azi" min="1" max="6" value="3">
+    <span id="azi-val">3</span>
+  </label>
+  <label>Ray count
+    <input type="range" id="rcnt" min="3" max="13" step="2" value="7">
+    <span id="rcnt-val">7</span>
+  </label>
+  <label>Opacity
+    <input type="range" id="opac" min="10" max="100" value="55">
+    <span id="opac-val">55%</span>
+  </label>
+</div>
+
+<div id="hint">Left-drag: rotate &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../../01-physics/01-matrices/matrices.js"></script>
+<script src="../../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../../01-physics/04-sampler/sampler.js"></script>
+<script src="../01-scene/scene.js"></script>
+<script src="../02-envelope/envelope.js"></script>
+<script src="rays.js"></script>
+
+<script>
+const SYSTEM_DEF = {
+  beam: { lambda: 1064e-9, w0: 1e-3, waistZ: 0 },
+  elements: [
+    { type: 'free', d: 0.5 },
+    { type: 'lens', f: 0.3 },
+    { type: 'free', d: 0.8 },
+  ],
+  sampling: { perSegment: 120 },
+};
+
+// ── Scene ────────────────────────────────────────────────────────────────────
+const container = document.getElementById('viewport');
+const S = createScene(container);
+
+// ── Persistent groups (rebuilt on control change) ────────────────────────────
+let envGroup  = null;
+let raysGroup = null;
+let opticGroup = null;
+
+function rebuild(rayCount, aziCount, opacity) {
+  // Remove old groups
+  if (envGroup)   S.scene.remove(envGroup);
+  if (raysGroup)  S.scene.remove(raysGroup);
+  if (opticGroup) S.scene.remove(opticGroup);
+
+  const sys = { ...SYSTEM_DEF, rays: { kind: 'parallel', count: rayCount, halfWidth: 1e-3 } };
+  const bd  = buildBeamData(sys);
+  const { gaussian, rays, optics, meta } = bd;
+  const L = meta.totalLength;
+
+  S.setSystemLength(L);
+
+  // Envelope
+  envGroup = buildEnvelope(gaussian.samples, { radialSegments: 48, opacity: 0.14 });
+  S.addToScene(envGroup);
+  const tScale = envGroup.userData.transverseScale;
+
+  // Waist rings
+  const ringGroup = buildWaistRings(gaussian.waists, tScale);
+  S.addToScene(ringGroup);
+
+  // Ray lines
+  raysGroup = buildRayLines(rays.paths, tScale, { azimuthalCount: aziCount, opacity: opacity / 100 });
+  S.addToScene(raysGroup);
+
+  // Optic elements (lenses/mirrors)
+  opticGroup = new THREE.Group();
+  const discR = meta.w0 * tScale * 3;
+  optics.forEach(el => {
+    const geo = new THREE.CylinderGeometry(discR, discR, 0.001, 48);
+    geo.rotateX(Math.PI / 2);
+    const mat = new THREE.MeshPhongMaterial({ color: 0xc8a84b, emissive: 0x201000, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(0, 0, el.z);
+    opticGroup.add(mesh);
+    const rGeo = new THREE.TorusGeometry(discR, discR * 0.04, 6, 48);
+    const rMat = new THREE.MeshBasicMaterial({ color: 0xe3c07e });
+    const ring = new THREE.Mesh(rGeo, rMat);
+    ring.position.set(0, 0, el.z);
+    opticGroup.add(ring);
+  });
+  S.addToScene(opticGroup);
+
+  // Overlay
+  document.getElementById('sys').textContent =
+    `λ=${(meta.lambda*1e9).toFixed(0)}nm  w₀=${(meta.w0*1e3).toFixed(1)}mm  L=${L.toFixed(2)}m`;
+  document.getElementById('rinfo').textContent =
+    `${rayCount} rays × ${aziCount} azimuthal planes = ${rayCount * aziCount} lines`;
+  const zF = findFocus(rays.paths);
+  document.getElementById('focus').textContent =
+    zF ? `z = ${(zF*100).toFixed(1)} cm` : 'not found';
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+function getControls() {
+  return {
+    rayCount: parseInt(document.getElementById('rcnt').value),
+    aziCount: parseInt(document.getElementById('azi').value),
+    opacity:  parseInt(document.getElementById('opac').value),
+  };
+}
+
+['azi','rcnt','opac'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    const v = el.value;
+    document.getElementById(id + '-val').textContent =
+      id === 'opac' ? v + '%' : v;
+    const c = getControls();
+    rebuild(c.rayCount, c.aziCount, c.opacity);
+  });
+});
+
+// ── Initial render ────────────────────────────────────────────────────────────
+const c = getControls();
+rebuild(c.rayCount, c.aziCount, c.opacity);
+S.animate();
+</script>
+</body>
+</html>

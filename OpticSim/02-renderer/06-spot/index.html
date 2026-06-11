@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>06-spot validation</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#b0d0e8; font-family:monospace; overflow:hidden; }
+
+  #info {
+    position:absolute; top:12px; left:50%; transform:translateX(-50%);
+    background:rgba(6,12,20,0.88); border:1px solid #1a3050;
+    padding:10px 20px; border-radius:8px; font-size:0.78rem; z-index:10;
+    pointer-events:none; white-space:nowrap;
+  }
+  .row { display:flex; gap:20px; align-items:center; margin-bottom:4px; }
+  .lbl { color:#4a8aaa; width:80px; }
+  .val { color:#7ec8e3; min-width:100px; }
+  .pass  { color:#4ec94e; font-weight:bold; }
+  .fail  { color:#e04040; font-weight:bold; }
+
+  #controls {
+    position:absolute; top:12px; right:16px;
+    background:rgba(6,12,20,0.88); border:1px solid #1a3050;
+    padding:10px 14px; border-radius:8px; font-size:0.76rem; z-index:10;
+  }
+  #controls label { color:#4a8aaa; display:block; margin-bottom:3px; }
+  #zSlider { width:180px; }
+  #toggleBtn {
+    margin-top:8px; padding:4px 14px; background:#0a1824;
+    border:1px solid #2a5070; color:#7ec8e3; cursor:pointer;
+    border-radius:4px; font-family:monospace; font-size:0.76rem; width:100%;
+  }
+  #toggleBtn:hover { background:#0e2438; }
+
+  #hint {
+    position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+    background:rgba(6,12,20,0.7); border:1px solid #1a2a3a;
+    padding:5px 16px; border-radius:20px; font-size:0.7rem; color:#3a5a7a;
+    pointer-events:none;
+  }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <div class="row"><span class="lbl">z position</span><span class="val" id="vZ">—</span></div>
+  <div class="row"><span class="lbl">w(z) calc</span><span class="val" id="vW">—</span></div>
+  <div class="row"><span class="lbl">w(z) theory</span><span class="val" id="vWt">—</span></div>
+  <div class="row"><span class="lbl">match</span><span id="vMatch">—</span></div>
+  <div style="border-top:1px solid #1a3050;margin:6px 0 4px"></div>
+  <div id="tests"></div>
+</div>
+
+<div id="controls">
+  <label>Spot z position</label>
+  <input type="range" id="zSlider" min="0" max="100" value="0" step="1">
+  <button id="toggleBtn">Hide Spot</button>
+</div>
+
+<div id="hint">Drag disc along Z &nbsp;|&nbsp; Left-drag empty: rotate &nbsp;|&nbsp; Scroll: zoom</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../../01-physics/01-matrices/matrices.js"></script>
+<script src="../../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../../01-physics/04-sampler/sampler.js"></script>
+<script src="../../02-renderer/01-scene/scene.js"></script>
+<script src="../../02-renderer/02-envelope/envelope.js"></script>
+<script src="spot.js"></script>
+
+<script>
+// ── Physics setup ─────────────────────────────────────────────────────────────
+// Simple free-space propagation: single beam, no optics, so w(z) is analytic.
+// w(z) = w0 * sqrt(1 + ((z - waistZ)/zR)^2)
+const LAMBDA  = 1064e-9;
+const W0      = 0.3e-3;    // 0.3 mm waist → zR ≈ 0.266 m, fits in 1.5 m system
+const WAIST_Z = 0;
+const L       = 1.5;       // 1.5 m free space
+
+const SYSTEM = {
+  beam:     { lambda: LAMBDA, w0: W0, waistZ: WAIST_Z },
+  elements: [ { type: 'free', d: L } ],
+  sampling: { perSegment: 200 },
+};
+
+const bd  = buildBeamData(SYSTEM);
+const { gaussian, meta } = bd;
+const ZR  = rayleighRange(W0, LAMBDA);
+
+// ── Three.js scene ─────────────────────────────────────────────────────────────
+const THREE  = window.THREE;
+const scene  = new THREE.Scene();
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x0d1117);
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.001, 50);
+const midZ   = L / 2;
+const dist   = L * 0.8;
+camera.position.set(dist * 0.75, dist * 0.6, midZ);
+camera.lookAt(0, 0, midZ);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.target.set(0, 0, midZ); controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+// Axis
+const axMat = new THREE.LineBasicMaterial({ color: 0x2a4a6a, transparent:true, opacity:0.5 });
+scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+  [new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,L)]), axMat));
+
+// Gaussian envelope
+const envGrp = buildEnvelope(gaussian.samples, { opacity: 0.13, radialSegments: 48 });
+scene.add(envGrp);
+const tScale = envGrp.userData.transverseScale;
+
+// Spot viewer
+const spot = createSpotViewer(scene);
+spot.update(gaussian.samples, tScale);
+spot.setZ(0);
+spot.show();
+spot.attachDrag(renderer, camera, controls);
+
+// ── Slider → setZ ─────────────────────────────────────────────────────────────
+const slider   = document.getElementById('zSlider');
+const toggleBtn = document.getElementById('toggleBtn');
+
+slider.min   = 0;
+slider.max   = Math.round(L * 100);
+slider.value = 0;
+slider.addEventListener('input', () => {
+  const z = parseFloat(slider.value) / 100;
+  spot.setZ(z);
+  updateReadout(z);
+});
+
+toggleBtn.addEventListener('click', () => {
+  if (spot.getW() > 0 || !toggleBtn.textContent.includes('Show')) {
+    // toggle based on disc visibility
+  }
+  const showing = toggleBtn.textContent.includes('Hide');
+  if (showing) { spot.hide(); toggleBtn.textContent = 'Show Spot'; }
+  else         { spot.show(); toggleBtn.textContent = 'Hide Spot'; }
+});
+
+// ── Readout & verification ─────────────────────────────────────────────────────
+function wTheory(z) {
+  return W0 * Math.sqrt(1 + Math.pow((z - WAIST_Z) / ZR, 2));
+}
+
+function updateReadout(z) {
+  const wCalc  = spot.getW();
+  const wTh    = wTheory(z);
+  const err    = wCalc > 0 ? Math.abs(wCalc - wTh) / wTh : 1;
+  const ok     = err < 0.005;
+
+  document.getElementById('vZ').textContent  = (z * 100).toFixed(1) + ' cm';
+  document.getElementById('vW').textContent  = wCalc > 0 ? (wCalc * 1e3).toFixed(4) + ' mm' : '—';
+  document.getElementById('vWt').textContent = (wTh  * 1e3).toFixed(4) + ' mm';
+  document.getElementById('vMatch').innerHTML = ok
+    ? '<span class="pass">✓ &lt;0.5% error</span>'
+    : `<span class="fail">✗ err=${(err*100).toFixed(2)}%</span>`;
+
+  // Sync slider in case setZ was called from drag
+  slider.value = Math.round(z * 100);
+}
+
+// Initial readout
+updateReadout(0);
+
+// ── Quantitative tests ─────────────────────────────────────────────────────────
+function runTests() {
+  const tests = [];
+  function check(label, got, expected, tol=0.005) {
+    const err = Math.abs(got - expected) / Math.max(expected, 1e-20);
+    tests.push({ label, got, expected, pass: err < tol });
+  }
+
+  // Test 1: w at waist = w0
+  spot.setZ(WAIST_Z); check('w(waist) = w₀', spot.getW(), W0);
+
+  // Test 2: w at z = zR → w0 * sqrt(2)
+  spot.setZ(WAIST_Z + ZR); check('w(zR) = w₀√2', spot.getW(), W0 * Math.SQRT2);
+
+  // Test 3: w at z = 2×zR → w0 * sqrt(5)
+  spot.setZ(WAIST_Z + 2 * ZR); check('w(2zR) = w₀√5', spot.getW(), W0 * Math.sqrt(5));
+
+  // Test 4: w at some arbitrary z matches theory
+  const zTest = 0.8;
+  spot.setZ(zTest); check(`w(${zTest}m) matches theory`, spot.getW(), wTheory(zTest));
+
+  // Restore initial position
+  spot.setZ(0); updateReadout(0);
+
+  const div = document.getElementById('tests');
+  div.innerHTML = tests.map(t =>
+    `<div class="row"><span class="lbl" style="font-size:0.68rem">${t.label}</span>` +
+    `<span class="${t.pass ? 'pass' : 'fail'}">${t.pass ? '✓' : '✗'}</span>` +
+    `<span class="val" style="font-size:0.68rem">${(t.got*1e6).toFixed(1)} µm</span></div>`
+  ).join('');
+}
+runTests();
+
+// ── Hook setZ to sync slider during drag ──────────────────────────────────────
+// Monkey-patch spot.setZ to also update the readout
+const _origSetZ = spot.setZ.bind(spot);
+// We can't easily intercept setZ from outside. Instead poll in the render loop.
+let _lastZ = -1;
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── Animation ─────────────────────────────────────────────────────────────────
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  // Keep readout in sync with drag
+  const z = spot.getZ();
+  if (Math.abs(z - _lastZ) > 1e-6) { _lastZ = z; updateReadout(z); }
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

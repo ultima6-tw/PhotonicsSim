@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 14 — d_eff(θ) d-tensor Verification</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; }
+  .pass { color: #3fb950; } .fail { color: #f85149; } .info { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 10px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>Phase 14 — d_eff(θ) from d-tensor</h1>
+<p>Verifies: <code>deff.js</code> — dynamic effective NL coefficient from crystal symmetry + Voigt tensor projection.</p>
+<p class="info">Reference: Dmitriev et al. "Handbook of NLO Crystals" 1999; Kato 1994 (KTP/LBO).</p>
+
+<h2>1. BBO (3m) — Type-I: d_eff = d₂₂ cos θ + d₃₁ sin θ</h2>
+<p>d₂₂=2.2 pm/V, d₃₁=−0.16 pm/V. Tolerances: ±5%.</p>
+<table id="t1">
+<tr><th>θ (°)</th><th>Context</th><th>Reference (pm/V)</th><th>Computed (pm/V)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>2. BBO (3m) — Type-II: d_eff ≈ d₂₂|cos 2θ|</h2>
+<p>Approximate formula for φ=90° cut. Tolerance: ±5%.</p>
+<table id="t2">
+<tr><th>θ (°)</th><th>Context</th><th>Reference (pm/V)</th><th>Computed (pm/V)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>3. KTP (mm2) — Type-II XY plane: d_eff = d₁₅ sin²φ + d₂₄ cos²φ</h2>
+<p>d₁₅=2.04 pm/V, d₂₄=3.92 pm/V (Kato 1994). Derived from Voigt tensor projection. Tolerance: ±8%.</p>
+<table id="t3">
+<tr><th>φ (°)</th><th>Context</th><th>Reference (pm/V)</th><th>Computed (pm/V)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>4. LBO (mm2) — Type-I XY plane: d_eff = d₃₂ cos φ − d₃₁ sin φ</h2>
+<p>d₃₁=−0.67 pm/V, d₃₂=0.85 pm/V (Kato 1994). Tolerance: ±20% (biaxial d-tensor values vary between references).</p>
+<table id="t4">
+<tr><th>φ (°)</th><th>Context</th><th>Reference (pm/V)</th><th>Computed (pm/V)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>5. KDP (−42m) — Type-I: d_eff = d₃₆|sin θ|</h2>
+<p>d₃₆=0.39 pm/V, φ=45° standard cut. Tolerance: ±10%.</p>
+<table id="t5">
+<tr><th>θ (°)</th><th>Context</th><th>Reference (pm/V)</th><th>Computed (pm/V)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>6. PPLN (QPM) — d_eff = (2/π) × d₃₃ (constant)</h2>
+<p>d₃₃=27.0 pm/V (MgO:LiNbO₃, Gayer 2008). Tolerance: ±1%.</p>
+<table id="t6">
+<tr><th>Computed (pm/V)</th><th>Expected (pm/V)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>7. getDeff() unified dispatcher</h2>
+<p>Tests the top-level getDeff(crystal_id, type, angle_deg) function.</p>
+<table id="t7">
+<tr><th>Call</th><th>Expected</th><th>Got</th><th>Result</th></tr>
+</table>
+
+<h2>8. Angular monotonicity (physical trend check)</h2>
+<p>d_eff should vary smoothly and correctly with angle.</p>
+<table id="t8">
+<tr><th>Crystal/Type</th><th>Trend description</th><th>Checked range</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="deff.js"></script>
+<script>
+let passed = 0, failed = 0;
+
+function row(tid, cells, ok) {
+  const tr = document.createElement('tr');
+  cells.forEach((c, i) => {
+    const td = document.createElement('td');
+    td.textContent = c;
+    if (i === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td);
+  });
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function pmerr(computed, ref) {
+  return Math.abs(computed - ref) / ref;
+}
+
+// ── Section 1: BBO Type-I ─────────────────────────────────────────────────────
+const bboI_cases = [
+  { theta: 22.8, ref: 2.00, ctx: '1064nm SHG (Dmitriev)' },
+  { theta: 29.2, ref: 1.85, ctx: '800nm SHG (approx)' },
+  { theta: 45.0, ref: null, ctx: 'angle dependency check' },
+];
+for (const { theta, ref, ctx } of bboI_cases) {
+  const v = deff_bbo('I', theta);
+  if (ref !== null) {
+    const err = pmerr(v, ref);
+    const ok = err < 0.05;
+    row('t1', [theta, ctx, ref.toFixed(3), v.toFixed(4), (err*100).toFixed(1)+'%', ok?'PASS':'FAIL'], ok);
+  } else {
+    // just display, no pass/fail
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${theta}</td><td class="info">${ctx}</td><td>—</td><td>${v.toFixed(4)}</td><td>—</td><td class="info">INFO</td>`;
+    document.getElementById('t1').appendChild(tr);
+  }
+}
+// Formula check: d_eff = d22 cos(θ) + d31 sin(θ) should give known values exactly
+const v_22p8 = 2.2*Math.cos(22.8*Math.PI/180) + (-0.16)*Math.sin(22.8*Math.PI/180);
+const ok_formula = Math.abs(deff_bbo('I', 22.8) - v_22p8) < 1e-12;
+row('t1', ['formula', 'd_eff = d₂₂cosθ + d₃₁sinθ exact', v_22p8.toFixed(6), deff_bbo('I',22.8).toFixed(6), '0', ok_formula?'PASS':'FAIL'], ok_formula);
+
+// ── Section 2: BBO Type-II ────────────────────────────────────────────────────
+const bboII_cases = [
+  { theta: 33.6, ref: 0.88, ctx: '1064nm SHG Type-II (Dmitriev)' },
+  { theta: 40.0, ref: null, ctx: 'angle dependency check' },
+];
+for (const { theta, ref, ctx } of bboII_cases) {
+  const v = deff_bbo('II', theta);
+  if (ref !== null) {
+    const err = pmerr(v, ref);
+    const ok = err < 0.05;
+    row('t2', [theta, ctx, ref.toFixed(3), v.toFixed(4), (err*100).toFixed(1)+'%', ok?'PASS':'FAIL'], ok);
+  } else {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${theta}</td><td class="info">${ctx}</td><td>—</td><td>${v.toFixed(4)}</td><td>—</td><td class="info">INFO</td>`;
+    document.getElementById('t2').appendChild(tr);
+  }
+}
+
+// ── Section 3: KTP Type-II ────────────────────────────────────────────────────
+const ktp_cases = [
+  { phi: 23.5, ref: 3.50, ctx: '1064nm SHG Type-II (Dmitriev)' },
+  { phi:  0.0, ref: 3.92, ctx: 'φ=0°: d_eff = d₂₄ (exact)' },
+  { phi: 90.0, ref: 2.04, ctx: 'φ=90°: d_eff = d₁₅ (exact)' },
+];
+for (const { phi, ref, ctx } of ktp_cases) {
+  const v = deff_ktp('II', phi);
+  const tol = (phi === 0.0 || phi === 90.0) ? 0.001 : 0.08;
+  const err = pmerr(v, ref);
+  const ok = err < tol;
+  row('t3', [phi, ctx, ref.toFixed(3), v.toFixed(4), (err*100).toFixed(1)+'%', ok?'PASS':'FAIL'], ok);
+}
+
+// ── Section 4: LBO Type-I ────────────────────────────────────────────────────
+const lbo_cases = [
+  { phi: 11.3, ref: 0.85, ctx: '1064nm SHG XY-plane (Kato 1994)' },
+  { phi:  0.0, ref: 0.85, ctx: 'φ=0°: d_eff = d₃₂ (exact)' },
+];
+for (const { phi, ref, ctx } of lbo_cases) {
+  const v = deff_lbo('I', phi);
+  const tol = (phi === 0.0) ? 0.001 : 0.20;
+  const err = pmerr(v, ref);
+  const ok = err < tol;
+  row('t4', [phi, ctx, ref.toFixed(3), v.toFixed(4), (err*100).toFixed(1)+'%', ok?'PASS':'FAIL'], ok);
+}
+
+// ── Section 5: KDP Type-I ────────────────────────────────────────────────────
+// Old PM angle θ≈41° matches tabulated 0.24 pm/V (with d36=0.39)
+const v_kdp41 = deff_kdp('I', 41.0);
+const err_kdp = pmerr(v_kdp41, 0.24);
+row('t5', [41.0, '1064nm SHG Type-I (old Sellmeier θ≈41°)', '0.24', v_kdp41.toFixed(4), (err_kdp*100).toFixed(1)+'%', err_kdp<0.10?'PASS':'FAIL'], err_kdp<0.10);
+
+// Formula check at θ=0 → d_eff=0, θ=90 → d_eff=d36
+const ok_kdp0  = Math.abs(deff_kdp('I', 0))  < 1e-10;
+const ok_kdp90 = Math.abs(deff_kdp('I', 90) - 0.39) < 1e-10;
+row('t5', [0,   'θ=0°: d_eff=0 (exact)',   '0',    deff_kdp('I',0).toFixed(6),  '0', ok_kdp0?'PASS':'FAIL'], ok_kdp0);
+row('t5', [90,  'θ=90°: d_eff=d₃₆ (exact)','0.39', deff_kdp('I',90).toFixed(6), '0', ok_kdp90?'PASS':'FAIL'], ok_kdp90);
+
+// ── Section 6: PPLN ───────────────────────────────────────────────────────────
+const v_ppln = deff_ppln();
+const exp_ppln = (2/Math.PI) * 27.0;
+const err_ppln = pmerr(v_ppln, 17.2);
+const ok_ppln = err_ppln < 0.01;
+row('t6', [v_ppln.toFixed(5), '17.2 (= 2/π × 27)', (err_ppln*100).toFixed(3)+'%', ok_ppln?'PASS':'FAIL'], ok_ppln);
+
+// ── Section 7: getDeff dispatcher ────────────────────────────────────────────
+const dispatchCases = [
+  { id: 'bbo',  type: 'I',   angle: 22.8, ref: 2.00,  tol: 0.05 },
+  { id: 'ktp',  type: 'II',  angle: 23.5, ref: 3.50,  tol: 0.08 },
+  { id: 'lbo',  type: 'I',   angle: 11.3, ref: 0.85,  tol: 0.20 },
+  { id: 'kdp',  type: 'I',   angle: 41.0, ref: 0.24,  tol: 0.10 },
+  { id: 'ppln', type: 'QPM', angle: 0,    ref: 17.19, tol: 0.01 },
+  { id: 'unknown', type: 'I', angle: 0,   ref: null,  tol: 0 },
+];
+for (const { id, type, angle, ref, tol } of dispatchCases) {
+  const v = getDeff(id, type, angle);
+  if (ref === null) {
+    const ok = v === null;
+    row('t7', [`getDeff('${id}','${type}',${angle})`, 'null', String(v), ok?'PASS':'FAIL'], ok);
+  } else {
+    const err = pmerr(v, ref);
+    const ok = err < tol;
+    row('t7', [`getDeff('${id}','${type}',${angle})`, ref.toFixed(3)+' pm/V', v.toFixed(4)+' pm/V', ok?'PASS':'FAIL'], ok);
+  }
+}
+
+// ── Section 8: Angular monotonicity ──────────────────────────────────────────
+// BBO Type-I: should decrease from ~2.2 (θ=0°) to ~0 (θ=90°)
+{
+  let mono = true;
+  let prev = deff_bbo('I', 0);
+  for (let t = 5; t <= 85; t += 5) {
+    const v = deff_bbo('I', t);
+    // d_eff = d22 cosθ + d31 sinθ; derivative = -d22 sinθ + d31 cosθ
+    // Negative for most angles (d22 >> |d31|), so should be monotonically decreasing
+    // Minimum is at tanθ = d31/d22 ≈ -0.073, θ ≈ -4.2° (out of range)
+    // So within [0°,90°] it is strictly decreasing
+    if (v > prev + 1e-9) { mono = false; break; }
+    prev = v;
+  }
+  row('t8', ['BBO Type-I', 'Monotonically decreasing θ∈[0°,90°]', '0-90° step 5°', mono?'PASS':'FAIL'], mono);
+}
+
+// KTP Type-II: d_eff(φ) = d15 sin²φ + d24 cos²φ
+// At φ=0: d24=3.92, at φ=90: d15=2.04. Should monotonically decrease 0→90°.
+{
+  let mono = true;
+  let prev = deff_ktp('II', 0);
+  for (let p = 5; p <= 90; p += 5) {
+    const v = deff_ktp('II', p);
+    if (v > prev + 1e-9) { mono = false; break; }
+    prev = v;
+  }
+  row('t8', ['KTP Type-II', 'Monotonically decreasing φ∈[0°,90°] (d₂₄>d₁₅)', '0-90° step 5°', mono?'PASS':'FAIL'], mono);
+}
+
+// LBO Type-I: d32 cosφ − d31 sinφ. d31=-0.67, so −d31 sinφ = +0.67 sinφ
+// d_eff = 0.85 cosφ + 0.67 sinφ → increases with φ at first (since +0.67 sinφ term)
+// The peak is at tanφ = 0.67/0.85 ≈ 0.788 → φ ≈ 38.2°
+// So NOT monotone; it rises from 0 to 38°, then falls.
+{
+  const v0  = deff_lbo('I', 0);
+  const v38 = deff_lbo('I', 38.2);
+  const v90 = deff_lbo('I', 90);
+  // v38 should be peak, v0 and v90 should be below v38
+  const ok = v38 > v0 && v38 > v90 && v0 > 0 && v90 > 0;
+  row('t8', ['LBO Type-I', `Peak at φ≈38°: d_eff(38°)=${v38.toFixed(3)} > d_eff(0°)=${v0.toFixed(3)},d_eff(90°)=${v90.toFixed(3)}`, '0°,38°,90°', ok?'PASS':'FAIL'], ok);
+}
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+document.getElementById('summary').innerHTML =
+  `<span class="${failed===0?'pass':'fail'}">${passed}/${passed+failed} passed` +
+  `${failed===0?' ✓ Phase 14 COMPLETE':` — ${failed} FAILED`}</span>`;
+</script>
+</body>
+</html>

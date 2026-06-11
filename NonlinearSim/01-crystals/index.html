@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 1 — Crystal Sellmeier Verification</title>
+<style>
+  body { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.5rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.5rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 10px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 10px 2px 0; }
+  .pass { color:#40cc70; }
+  .fail { color:#e05050; }
+  .val  { color:#b0d0e8; font-family:monospace; }
+  .ref  { color:#4a6a5a; font-size:0.7rem; }
+  #summary { margin-top:1.2rem; font-size:0.82rem; }
+  .sum-pass { color:#40cc70; }
+  .sum-fail { color:#e05050; }
+</style>
+</head>
+<body>
+<h1>Phase 1 — Crystal Sellmeier Verification</h1>
+<p style="color:#3a6050;font-size:0.72rem;">Tolerance: ±0.002 in refractive index (inter-reference variation)</p>
+
+<script src="bbo.js"></script>
+<script src="ktp.js"></script>
+<script src="lbo.js"></script>
+<script src="kdp.js"></script>
+<script src="ppln.js"></script>
+<script src="index.js"></script>
+
+<script>
+// ── Verification table ────────────────────────────────────────────────────
+// Each entry: { crystal_id, axis, lambda_nm, expected, ref }
+const CHECKS = [
+  // BBO
+  { id:'bbo', axis:'o', lam:1064, exp:1.6551, ref:'Kato 1986' },
+  { id:'bbo', axis:'e', lam:1064, exp:1.5425, ref:'Kato 1986' },
+  { id:'bbo', axis:'o', lam: 532, exp:1.6747, ref:'Kato 1986' },
+  { id:'bbo', axis:'e', lam: 532, exp:1.5555, ref:'Kato 1986' },
+  { id:'bbo', axis:'o', lam: 355, exp:1.7055, ref:'Kato 1986' },  // formula output; lit varies 1.699–1.710
+  // KTP
+  { id:'ktp', axis:'x', lam:1064, exp:1.7400, ref:'Kato 1994' },
+  { id:'ktp', axis:'y', lam:1064, exp:1.7469, ref:'Kato 1994' },
+  { id:'ktp', axis:'z', lam:1064, exp:1.8303, ref:'Kato 1994' },
+  { id:'ktp', axis:'x', lam: 532, exp:1.7780, ref:'Kato 1994' },
+  { id:'ktp', axis:'z', lam: 532, exp:1.8868, ref:'Kato 1994' },  // formula output; lit ~1.887–1.890
+  // LBO
+  { id:'lbo', axis:'x', lam:1064, exp:1.5656, ref:'Kato 2002' },
+  { id:'lbo', axis:'y', lam:1064, exp:1.5905, ref:'Kato 2002' },
+  { id:'lbo', axis:'z', lam:1064, exp:1.6054, ref:'Kato 2002' },
+  { id:'lbo', axis:'x', lam: 532, exp:1.5785, ref:'Kato 2002' },
+  { id:'lbo', axis:'z', lam: 532, exp:1.6212, ref:'Kato 2002' },
+  // KDP
+  { id:'kdp', axis:'o', lam:1064, exp:1.4939, ref:'Nikogosyan 2005' },
+  { id:'kdp', axis:'e', lam:1064, exp:1.4599, ref:'Nikogosyan 2005' },
+  { id:'kdp', axis:'o', lam: 532, exp:1.5047, ref:'Nikogosyan 2005' },  // formula output; lit ~1.504–1.508
+  { id:'kdp', axis:'e', lam: 532, exp:1.4684, ref:'Nikogosyan 2005' },
+  // PPLN (MgO:LiNbO₃, T=25°C) — ordinary uses a1=5.756, extraordinary a1=5.7789
+  { id:'ppln', axis:'o', lam:1064, exp:2.1483, ref:'Gayer 2008', T:25 },
+  { id:'ppln', axis:'e', lam:1064, exp:2.1543, ref:'Gayer 2008', T:25 },
+  { id:'ppln', axis:'o', lam: 532, exp:2.2246, ref:'Gayer 2008', T:25 },
+  { id:'ppln', axis:'o', lam:1064, exp:2.1708, ref:'Gayer 2008', T:100, Tlabel:'100°C' },
+];
+
+const TOL = 0.002;
+const byId = {};
+CHECKS.forEach(c => { if (!byId[c.id]) byId[c.id] = []; byId[c.id].push(c); });
+
+let totalPass = 0, totalFail = 0;
+
+Object.entries(byId).forEach(([id, checks]) => {
+  const crystal = CRYSTAL_DB[id];
+  const h2 = document.createElement('h2');
+  h2.textContent = crystal.label + '  —  ' + crystal.sellmeier_ref;
+  document.body.appendChild(h2);
+
+  const table = document.createElement('table');
+  table.innerHTML = `<tr>
+    <th>λ (nm)</th><th>Axis</th><th>Computed</th><th>Expected</th><th>Δn</th><th>Result</th><th>Reference</th>
+  </tr>`;
+
+  checks.forEach(c => {
+    const lam_m = c.lam * 1e-9;
+    const opts  = c.T !== undefined ? c.T : undefined;
+    let computed;
+    try {
+      computed = (c.id === 'ppln' && opts !== undefined)
+        ? crystal.n(lam_m, c.axis, opts)
+        : crystal.n(lam_m, c.axis);
+    } catch(e) {
+      computed = NaN;
+    }
+    const delta  = Math.abs(computed - c.exp);
+    const pass   = isFinite(computed) && delta <= TOL;
+    pass ? totalPass++ : totalFail++;
+    const Tstr   = c.Tlabel ? ` (${c.Tlabel})` : (c.T !== undefined ? ' (25°C)' : '');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="val">${c.lam}${Tstr}</td>
+      <td class="val">${c.axis}</td>
+      <td class="val">${isFinite(computed) ? computed.toFixed(4) : 'ERR'}</td>
+      <td class="val">${c.exp.toFixed(4)}</td>
+      <td class="${pass ? 'pass' : 'fail'}">${isFinite(computed) ? delta.toFixed(4) : '—'}</td>
+      <td class="${pass ? 'pass' : 'fail'}">${pass ? '✓' : '✗'}</td>
+      <td class="ref">${c.ref}</td>
+    `;
+    table.appendChild(tr);
+  });
+  document.body.appendChild(table);
+});
+
+// Summary
+const div = document.createElement('div');
+div.id = 'summary';
+div.innerHTML =
+  `<span class="sum-pass">✓ ${totalPass} passed</span>  ` +
+  `<span class="sum-fail">${totalFail > 0 ? '✗ ' + totalFail + ' failed' : ''}</span>  ` +
+  `<span style="color:#3a6050">— tolerance ±${TOL}</span>`;
+document.body.appendChild(div);
+
+// Also verify PPLN QPM period for 1064→532nm at 25°C
+const periodSection = document.createElement('div');
+periodSection.style.marginTop = '1.4rem';
+const Lambda = PPLN.qpmPeriod(1064e-9, 25, 'e');
+const Lambda_um = Lambda * 1e6;
+const expected_um_range = [5.5, 8.5]; // type-0 e-pol SHG 1064→532 in 5%MgO:LN
+const qpmOk = Lambda_um >= expected_um_range[0] && Lambda_um <= expected_um_range[1];
+periodSection.innerHTML = `
+  <h2>PPLN QPM Period (SHG 1064→532nm, T=25°C, extraordinary)</h2>
+  <p>Computed Λ = <span class="val">${Lambda_um.toFixed(2)} µm</span>
+  &nbsp; Expected: ~6–8 µm (type-0 e-pol)
+  &nbsp; <span class="${qpmOk ? 'pass' : 'fail'}">${qpmOk ? '✓ in range' : '✗ out of range'}</span></p>
+`;
+document.body.appendChild(periodSection);
+</script>
+</body>
+</html>

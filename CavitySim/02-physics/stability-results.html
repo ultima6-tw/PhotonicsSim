@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CavitySim Phase 4 — Stability Diagram</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; font-weight: bold; }
+  .val  { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 12px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>CavitySim Phase 4 — Stability Diagram</h1>
+<p>Verifies: <code>stability.js</code> — g1g2Point, scanStability, findMinWaist.</p>
+
+<h2>g1g2Point — Single-point stability classification</h2>
+<table id="tP">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>scanStability — Symmetric cavity  (R₁=R₂=200mm, λ=1064nm)</h2>
+<table id="tS">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>Hemispherical scan  (R₁=∞, R₂=200mm, λ=1064nm)</h2>
+<table id="tH">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>findMinWaist & physical invariants</h2>
+<table id="tM">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="../01-elements/elements.js"></script>
+<script src="roundtrip.js"></script>
+<script src="eigenmode.js"></script>
+<script src="stability.js"></script>
+<script>
+const LAM = 1064e-9;
+let passed = 0, failed = 0, n = 0;
+
+function addRow(tid, label, expected, actual, ok) {
+  n++;
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td>${n}</td><td>${label}</td>` +
+    `<td class="val">${expected}</td>` +
+    `<td class="val">${actual}</td>` +
+    `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function near(a, b, tol) {
+  if (tol === undefined) tol = Math.abs(b) * 1e-6 + 1e-15;
+  return Math.abs(a - b) <= tol;
+}
+function f4(v) { return typeof v === 'number' ? v.toPrecision(5) : String(v); }
+
+// ════════════════════════════════════════════════════════════════════════════
+// g1g2Point tests
+// ════════════════════════════════════════════════════════════════════════════
+{
+  // Hemispherical: R1=∞, R2=200mm, L=100mm → g1=1, g2=0.5, product=0.5
+  const pH = g1g2Point(Infinity, 0.2, 0.1);
+  addRow('tP', 'Hemispherical g1 = 1',       '1',        f4(pH.g1),      near(pH.g1, 1));
+  addRow('tP', 'Hemispherical g2 = 0.5',     '0.5',      f4(pH.g2),      near(pH.g2, 0.5));
+  addRow('tP', 'Hemispherical product = 0.5','0.5',      f4(pH.product), near(pH.product, 0.5));
+  addRow('tP', 'Hemispherical region = stable','stable',  pH.region,      pH.region === 'stable');
+
+  // Confocal: R1=R2=100mm, L=100mm → g=0, product=0 (boundary)
+  const pC = g1g2Point(0.1, 0.1, 0.1);
+  addRow('tP', 'Confocal g1g2 = 0 (boundary)', '0',      f4(pC.product), near(pC.product, 0, 1e-12));
+  addRow('tP', 'Confocal region = boundary',  'boundary', pC.region,     pC.region === 'boundary');
+
+  // Concentric: R1=R2=100mm, L=200mm → g=-1, product=1 (boundary)
+  const pK = g1g2Point(0.1, 0.1, 0.2);
+  addRow('tP', 'Concentric product = 1',     '1',        f4(pK.product), near(pK.product, 1));
+  addRow('tP', 'Concentric region = boundary','boundary', pK.region,     pK.region === 'boundary');
+
+  // Unstable: R1=R2=100mm, L=250mm → g=-1.5, product=2.25
+  const pU = g1g2Point(0.1, 0.1, 0.25);
+  addRow('tP', 'Unstable product = 2.25',    '2.25',     f4(pU.product), near(pU.product, 2.25));
+  addRow('tP', 'Unstable region = unstable', 'unstable', pU.region,     pU.region === 'unstable');
+
+  // Planar: R1=R2=∞, any L → g1=g2=1, product=1 (boundary)
+  const pP = g1g2Point(Infinity, Infinity, 0.15);
+  addRow('tP', 'Planar g1 = g2 = 1',        '1',        f4(pP.product), near(pP.product, 1));
+  addRow('tP', 'Planar region = boundary',   'boundary', pP.region,     pP.region === 'boundary');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// scanStability — symmetric cavity R=200mm
+// Stable region: 0 < L < 2R = 400mm; confocal L=200mm; boundary at L=0 and L=400mm
+// ════════════════════════════════════════════════════════════════════════════
+{
+  const scan = scanStability(0.2, 0.2, [0.001, 0.399], 200, LAM);
+
+  // All interior points stable
+  const allStable = scan.every(r => r.stable);
+  addRow('tS', 'All 200 points in (0,2R) are stable', 'true', String(allStable), allStable);
+
+  // g decreases monotonically as L increases (g = 1-L/R)
+  const gMono = scan.every((r, i) => i === 0 || r.g1 <= scan[i-1].g1);
+  addRow('tS', 'g1 decreases monotonically with L', 'true', String(gMono), gMono);
+
+  // At L=R=200mm (confocal): product ≈ 0
+  const confocal = g1g2Point(0.2, 0.2, 0.2);
+  addRow('tS', 'At L=R: g1g2 ≈ 0 (confocal)', '0', f4(confocal.product), near(confocal.product, 0, 1e-12));
+
+  // Beam sizes exist for stable points
+  const allHaveW = scan.every(r => r.w1_m !== null && r.w2_m !== null && r.w1_m > 0);
+  addRow('tS', 'All stable points have w1,w2 > 0', 'true', String(allHaveW), allHaveW);
+
+  // Symmetric cavity: w1 ≈ w2 everywhere
+  const symm = scan.every(r => Math.abs(r.w1_m - r.w2_m) < r.w1_m * 1e-9);
+  addRow('tS', 'Symmetric cavity: w1 = w2 everywhere', 'true', String(symm), symm);
+
+  // At L→0: g→1, stable but w→0 (concave limit)
+  const shortL = scan[0];
+  addRow('tS', 'L→0: g1 ≈ 1', '≈ 1', f4(shortL.g1), Math.abs(shortL.g1 - 1) < 0.01);
+
+  // Unstable beyond L=2R
+  const unstablePt = g1g2Point(0.2, 0.2, 0.41);
+  addRow('tS', 'L=410mm > 2R: unstable', 'false', String(!unstablePt.region.includes('stable') || unstablePt.region === 'unstable'), unstablePt.region === 'unstable');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Hemispherical scan — R1=∞, R2=200mm
+// Stable for 0 < L < R = 200mm
+// ════════════════════════════════════════════════════════════════════════════
+{
+  const scanH = scanStability(Infinity, 0.2, [0.001, 0.199], 100, LAM);
+
+  const allStH = scanH.every(r => r.stable);
+  addRow('tH', 'All hemispherical scan points stable (L<R)', 'true', String(allStH), allStH);
+
+  // w1 (at flat mirror, waist) < w2 (at curved mirror) — hemispherical property
+  const waistSmaller = scanH.every(r => r.w1_m <= r.w2_m + r.w1_m * 1e-9);
+  addRow('tH', 'w at flat mirror ≤ w at curved mirror', 'true', String(waistSmaller), waistSmaller);
+
+  // Unstable at L=R+ε
+  const uH = g1g2Point(Infinity, 0.2, 0.201);
+  addRow('tH', 'L=201mm > R: unstable', 'unstable', uH.region, uH.region === 'unstable');
+
+  // At L=100mm (half of R): spot sizes are finite positive
+  const midH = scanH.find(r => Math.abs(r.L_m - 0.1) < 0.002);
+  addRow('tH', 'L=100mm: w1_m > 0', '> 0', f4(midH.w1_m), midH.w1_m > 0);
+  addRow('tH', 'L=100mm: w2_m > 0', '> 0', f4(midH.w2_m), midH.w2_m > 0);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// findMinWaist & physical invariants
+// ════════════════════════════════════════════════════════════════════════════
+{
+  // Hemispherical: w1 (at flat mirror) is smallest near L=0, increases toward L=R
+  // So findMinWaist should return something near L_min
+  const scanH = scanStability(Infinity, 0.2, [0.001, 0.199], 100, LAM);
+  const minW  = findMinWaist(scanH);
+
+  addRow('tM', 'findMinWaist: result is not null', 'not null', String(minW !== null), minW !== null);
+  addRow('tM', 'findMinWaist: w1_m > 0', '> 0', f4(minW.w1_m), minW.w1_m > 0);
+  addRow('tM', 'findMinWaist: result.L_m in range', 'in [0.001, 0.199]',
+    f4(minW.L_m), minW.L_m >= 0.001 && minW.L_m <= 0.199);
+
+  // findMinWaist on all-unstable: returns null
+  const scanU = scanStability(0.1, 0.1, [0.21, 0.4], 20, LAM);
+  const minU  = findMinWaist(scanU);
+  addRow('tM', 'findMinWaist: null for all-unstable scan', 'null', String(minU), minU === null);
+
+  // Physical invariant: w1 * w2 = λL/(π) is NOT constant in general (only at confocal)
+  // But g1g2 = product should match traceHalf formula: traceHalf = 2g1g2 - 1 (symmetric cavity)
+  const symScan = scanStability(0.2, 0.2, [0.01, 0.39], 10, LAM);
+  const gConsistent = symScan.every(r => {
+    const th = 2 * r.product - 1;
+    const m1  = makeElement('curvedMirror', { R_m: 0.2 });
+    const m2  = makeElement('curvedMirror', { R_m: 0.2 });
+    const Mrt = roundTripMatrix(m1, [makeElement('freeSpace',{L_m:r.L_m})], m2);
+    return Math.abs(traceHalf(Mrt) - th) < 1e-9;
+  });
+  addRow('tM', 'traceHalf = 2g1g2-1 for all symmetric scan points', 'true', String(gConsistent), gConsistent);
+}
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+const total = passed + failed;
+const sumEl = document.getElementById('summary');
+sumEl.textContent = `${passed}/${total} PASS${failed === 0 ? ' ✓ Phase 4 COMPLETE' : ` — ${failed} FAILED`}`;
+sumEl.style.color = failed === 0 ? '#3fb950' : '#f85149';
+</script>
+</body>
+</html>

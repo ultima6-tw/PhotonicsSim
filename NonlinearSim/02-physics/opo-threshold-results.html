@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OPO Threshold — Verification</title>
+<style>
+  body { background:#080f18; color:#9ab4c8; font-family:monospace; font-size:0.82rem; padding:20px; }
+  h2 { color:#4a9a8a; border-bottom:1px solid #1a2a3a; padding-bottom:6px; }
+  .section { margin:18px 0; }
+  .pass { color:#4a9a4a; }
+  .fail { color:#cc4444; }
+  .info { color:#3a6070; }
+  #summary { font-size:1rem; margin-top:20px; }
+</style>
+</head>
+<body>
+<h2>OPO Threshold — Physics Verification</h2>
+<div id="out"></div>
+<div id="summary"></div>
+
+<script src="bk-focus.js"></script>
+<script src="opo-threshold.js"></script>
+
+<script>
+const OUT = document.getElementById('out');
+let pass = 0, fail = 0;
+
+function checkRel(label, got, expected, tol = 0.01, unit = '') {
+  const relErr = Math.abs(got - expected) / (Math.abs(expected) + 1e-30);
+  const ok = relErr <= tol;
+  if (ok) pass++; else fail++;
+  OUT.insertAdjacentHTML('beforeend',
+    `<div class="${ok?'pass':'fail'}">${ok?'✓':'✗'} ${label}: `
+    + `got ${got.toPrecision(4)}${unit}, expected ${expected.toPrecision(4)}${unit} `
+    + `(err=${(relErr*100).toFixed(2)}%)</div>`);
+}
+
+function checkAbs(label, got_abs, tol_abs, unit = '') {
+  const ok = got_abs <= tol_abs;
+  if (ok) pass++; else fail++;
+  OUT.insertAdjacentHTML('beforeend',
+    `<div class="${ok?'pass':'fail'}">${ok?'✓':'✗'} ${label}: `
+    + `|value|=${got_abs.toExponential(3)}${unit} ≤ ${tol_abs.toExponential(2)}${unit}</div>`);
+}
+
+function checkBool(label, cond) {
+  if (cond) pass++; else fail++;
+  OUT.insertAdjacentHTML('beforeend',
+    `<div class="${cond?'pass':'fail'}">${cond?'✓':'✗'} ${label}</div>`);
+}
+
+function section(title) {
+  OUT.insertAdjacentHTML('beforeend',
+    `<div class="section"><strong style="color:#6a9aba">${title}</strong></div>`);
+}
+
+function info(msg) {
+  OUT.insertAdjacentHTML('beforeend', `<div class="info">  ${msg}</div>`);
+}
+
+// ── Reference parameters ──────────────────────────────────────────────────────
+// KTP Type-II OPO: 1064 nm → 1500 nm (signal) + 3540 nm (idler)
+// Energy conservation: 1/1064 = 1/1500 + 1/3540 (within crystal tuning range)
+// d_eff ≈ 3.18 pm/V, n_p=1.745, n_s=1.738, n_i=1.704
+
+const KTP = {
+  d_eff_pmV:   3.18,
+  lambda_p_nm: 1064,
+  lambda_s_nm: 1500,
+  lambda_i_nm: 3540,
+  n_p: 1.745,
+  n_s: 1.738,
+  n_i: 1.704,
+};
+
+// BBO OPO: 532 nm → 790 nm (Rb D2) + 1672 nm (IAMS cold-atom relevant)
+const BBO = {
+  d_eff_pmV:   2.0,
+  lambda_p_nm: 532,
+  lambda_s_nm: 790,
+  lambda_i_nm: 1672,
+  n_p: 1.670,
+  n_s: 1.660,
+  n_i: 1.650,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('1. Energy conservation (1/λ_p = 1/λ_s + 1/λ_i)');
+
+// Use absolute error: wavelength mismatch should be < 1 nm⁻¹ residual
+const ktp_ec = Math.abs(1/1064 - 1/1500 - 1/3540);  // nm⁻¹
+const bbo_ec = Math.abs(1/532  - 1/790  - 1/1672);
+info(`KTP: |1/λ_p - 1/λ_s - 1/λ_i| = ${ktp_ec.toExponential(3)} nm⁻¹ (expect < 1e-4)`);
+info(`BBO: |1/λ_p - 1/λ_s - 1/λ_i| = ${bbo_ec.toExponential(3)} nm⁻¹ (expect < 1e-4)`);
+checkAbs('KTP energy conservation |residual| < 1e-4 nm⁻¹', ktp_ec, 1e-4, ' nm⁻¹');
+checkAbs('BBO energy conservation |residual| < 5e-5 nm⁻¹', bbo_ec, 5e-5, ' nm⁻¹');
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('2. Boyd-Kleinman h(ξ) = arctan²(ξ)/ξ — analytical check');
+
+// h(ξ) = arctan²(ξ)/ξ
+checkRel('h(0.5)  = arctan²(0.5)/0.5',   bk_h(0.5),   Math.atan(0.5)**2/0.5,   1e-6);
+checkRel('h(1.0)  = arctan²(1)/1',       bk_h(1.0),   Math.atan(1.0)**2/1.0,   1e-6);
+checkRel('h(1.391)≈ h_max ≈ 0.6448',    bk_h(1.391), 0.6448, 0.005);
+// h(2.84): arctan(2.84)≈1.235 rad → h≈1.235²/2.84≈0.537
+checkRel('h(2.84) = arctan²(2.84)/2.84', bk_h(2.84),  Math.atan(2.84)**2/2.84, 1e-6);
+// ξ→0: h≈ξ
+checkRel('h(0.01) ≈ ξ = 0.01 (small-ξ limit)', bk_h(0.01), 0.01, 0.01);
+
+info(`h(2.84) = ${bk_h(2.84).toFixed(4)}  (our analytical formula; BK paper's 1.07 is for SHG + Gouy compensation)`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('3. opo_specGamma2 — formula and scaling');
+
+const C = 2.997924e8, EPS = 8.854188e-12;
+const d_si = 3.18e-12;
+const ws = 2*Math.PI*C/1500e-9, wi = 2*Math.PI*C/3540e-9;
+const G2_manual = 2 * d_si*d_si * ws * wi / (1.745*1.738*1.704 * EPS * C*C*C);
+const G2_ktp    = opo_specGamma2(3.18, 1500, 3540, 1.745, 1.738, 1.704);
+
+checkRel('Γ²_spec(KTP) matches manual formula', G2_ktp, G2_manual, 1e-6);
+info(`Γ²_spec(KTP) = ${G2_ktp.toExponential(3)} W⁻¹`);
+
+// Scaling: Γ² ∝ d²
+checkRel('Γ² ∝ d_eff²: doubling d → 4× Γ²',
+  opo_specGamma2(6.36, 1500, 3540, 1.745, 1.738, 1.704), 4 * G2_ktp, 1e-6);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('4. opo_singlePassGain — G = Γ²_spec × (2n_p/λ_p) × L × h(ξ) × P');
+
+// G ∝ P_pump (linear)
+const g_1W = opo_singlePassGain(3.18, 1064, 1500, 3540, 1.745, 1.738, 1.704, 20, 50, 1.0);
+const g_2W = opo_singlePassGain(3.18, 1064, 1500, 3540, 1.745, 1.738, 1.704, 20, 50, 2.0);
+checkRel('G ∝ P_pump: 2×P → 2×G', g_2W.G, 2 * g_1W.G, 1e-6);
+
+// G ∝ L × h(ξ); for small ξ h≈ξ∝L → G∝L²; ratio 2L/L ≈ 4
+const g_L10 = opo_singlePassGain(3.18, 1064, 1500, 3540, 1.745, 1.738, 1.704, 10, 200, 1.0);
+const g_L20 = opo_singlePassGain(3.18, 1064, 1500, 3540, 1.745, 1.738, 1.704, 20, 200, 1.0);
+info(`G(L=10mm, w₀=200µm): G=${g_L10.G.toExponential(3)}, ξ=${g_L10.xi.toFixed(4)}, h=${g_L10.h.toFixed(4)}`);
+info(`G(L=20mm, w₀=200µm): G=${g_L20.G.toExponential(3)}, ξ=${g_L20.xi.toFixed(4)}, h=${g_L20.h.toFixed(4)}`);
+const g_ratio = g_L20.G / g_L10.G;
+info(`G(2L)/G(L) = ${g_ratio.toFixed(3)} (expect ≈4 for G∝L², small ξ limit)`);
+checkRel('G(2L)/G(L) ≈ 4 for small ξ (G∝L²)', g_ratio, 4.0, 0.05);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('5. opo_threshold — DRO vs SRO');
+
+const base = { ...KTP, L_mm: 20, w0_um: 50, delta_s: 0.01, delta_i: 0.01 };
+const t_dro = opo_threshold({ ...base, mode: 'DRO' });
+const t_sro = opo_threshold({ ...base, mode: 'SRO' });
+
+checkBool('SRO threshold > DRO threshold', t_sro.P_th_W > t_dro.P_th_W);
+checkRel('SRO/DRO ratio = 1/δ_i = 100', t_sro.P_th_W / t_dro.P_th_W, 100, 0.001);
+info(`KTP DRO P_th = ${(t_dro.P_th_W*1e3).toFixed(1)} mW  (δ=1%, L=20mm, w₀=50µm)`);
+info(`KTP SRO P_th = ${t_sro.P_th_W.toFixed(2)} W`);
+info(`ξ = ${t_dro.xi.toFixed(3)},  h(ξ) = ${t_dro.h.toFixed(4)}`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('6. P_th scaling laws');
+
+// ∝ 1/d_eff²
+const t_2d = opo_threshold({ ...base, d_eff_pmV: 6.36, mode: 'DRO' });
+checkRel('P_th ∝ 1/d² (2×d → ¼ P_th)', t_dro.P_th_W, 4 * t_2d.P_th_W, 1e-6);
+
+// ∝ δ_s × δ_i
+const t_d05 = opo_threshold({ ...base, delta_s: 0.005, delta_i: 0.005, mode: 'DRO' });
+checkRel('P_th ∝ δ_s×δ_i (½δ → ¼ P_th)', t_dro.P_th_W, 4 * t_d05.P_th_W, 1e-6);
+
+// ∝ 1/(L × h(ξ)); for small ξ h≈ξ∝L → P_th∝1/L²; ratio P(L=10)/P(L=20) ∈ [2,4]
+const t_L10 = opo_threshold({ ...base, L_mm: 10, mode: 'DRO' });
+const Lratio = t_L10.P_th_W / t_dro.P_th_W;
+info(`P_th(L=10mm) = ${(t_L10.P_th_W*1e3).toFixed(0)} mW,  P_th(L=20mm) = ${(t_dro.P_th_W*1e3).toFixed(0)} mW`);
+info(`Ratio = ${Lratio.toFixed(3)} (between 2 for ξ≫ξ_opt and 4 for ξ≪ξ_opt)`);
+checkBool('P_th(L=10)/P_th(L=20) ∈ [2, 4]', Lratio >= 2 && Lratio <= 4);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('7. opo_optimalW0 — minimum P_th at ξ_opt ≈ 1.391');
+
+const opt = opo_optimalW0({ ...base, mode: 'DRO' });
+info(`KTP optimal w₀ = ${opt.w0_opt_um.toFixed(1)} µm,  ξ_opt = ${opt.xi_opt.toFixed(3)}`);
+info(`P_th_min = ${(opt.P_th_min_W*1e3).toFixed(1)} mW  (improvement ${(t_dro.P_th_W/opt.P_th_min_W).toFixed(2)}× over w₀=50µm)`);
+checkRel('ξ_opt ≈ 1.391', opt.xi_opt, 1.391, 0.01);
+checkBool('P_th_min < P_th(w₀=50µm)', opt.P_th_min_W < t_dro.P_th_W);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('8. opo_threshold_from_zR — CavitySim interface');
+
+// w₀=50µm → zR_free = π w₀² / λ_p
+const zR_ref = Math.PI * (50e-6)**2 / (1064e-9);
+const t_zR   = opo_threshold_from_zR({ ...KTP, L_mm: 20, zR_m: zR_ref,
+                                        delta_s: 0.01, delta_i: 0.01, mode: 'DRO' });
+checkRel('threshold_from_zR = threshold(w₀=50µm)', t_zR.P_th_W, t_dro.P_th_W, 1e-6);
+checkRel('zR_m passed through correctly', t_zR.zR_m, zR_ref, 1e-10);
+info(`zR_free = ${(zR_ref*1e3).toFixed(2)} mm  →  w₀ = ${(Math.sqrt(1064e-9*zR_ref/Math.PI)*1e6).toFixed(1)} µm`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('9. BBO OPO (532→790+1672nm, IAMS cold-atom)');
+
+const base_bbo = { ...BBO, L_mm: 15, w0_um: 40, delta_s: 0.02, delta_i: 0.02 };
+const t_bbo   = opo_threshold({ ...base_bbo, mode: 'DRO' });
+const opt_bbo = opo_optimalW0({ ...base_bbo, mode: 'DRO' });
+info(`BBO DRO P_th = ${(t_bbo.P_th_W*1e3).toFixed(0)} mW (δ=2%, L=15mm, w₀=40µm)`);
+info(`BBO optimal w₀ = ${opt_bbo.w0_opt_um.toFixed(1)} µm,  P_th_min = ${(opt_bbo.P_th_min_W*1e3).toFixed(0)} mW`);
+checkBool('BBO P_th > 0 and finite', t_bbo.P_th_W > 0 && isFinite(t_bbo.P_th_W));
+checkBool('BBO P_th < 5 W (CW range)', t_bbo.P_th_W < 5);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('10. opo_scanL — P_th decreases with L (fixed w₀)');
+
+const scanL = opo_scanL({ ...KTP, w0_um: 50, delta_s: 0.01, delta_i: 0.01, mode: 'DRO' },
+                          5, 50, 60);
+let monotonic = true;
+for (let i = 1; i < scanL.length; i++) {
+  if (scanL[i].P_th_W > scanL[i-1].P_th_W * 1.001) { monotonic = false; break; }
+}
+info(`L scan: ${scanL[0].L_mm.toFixed(0)}mm→${(t_dro.P_th_W*1e3).toFixed(0)}mW ... ${scanL[scanL.length-1].L_mm.toFixed(0)}mm→${(scanL[scanL.length-1].P_th_W*1e3).toFixed(0)}mW`);
+checkBool('P_th monotonically decreases with L (fixed w₀=50µm)', monotonic);
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('11. opo_scanW0 — minimum P_th near w₀_opt');
+
+// w₀_opt for L=20mm, KTP: from ξ_opt≈1.39 → w₀_opt = √(Lλ/(2πnξ_opt))
+const w0_opt_calc = Math.sqrt(20e-3 * 1064e-9 / (2*Math.PI * 1.745 * 1.391)) * 1e6;
+// Scan range centered around w₀_opt
+const w_min = Math.max(5, w0_opt_calc * 0.3);
+const w_max = w0_opt_calc * 5;
+const scanW = opo_scanW0({ ...KTP, L_mm: 20, delta_s: 0.01, delta_i: 0.01, mode: 'DRO' },
+                           w_min, w_max, 300);
+let minP = Infinity, minW = 0;
+scanW.forEach(r => { if (r.P_th_W < minP) { minP = r.P_th_W; minW = r.w0_um; } });
+info(`w₀ scan: ${w_min.toFixed(1)}–${w_max.toFixed(1)} µm,  minimum at w₀=${minW.toFixed(1)} µm (expected ${w0_opt_calc.toFixed(1)} µm)`);
+checkRel('scanW0 minimum w₀ ≈ analytical w₀_opt', minW, w0_opt_calc, 0.05);
+checkBool('scanW0 minimum P_th ≤ opo_optimalW0 result + 1%', minP <= opt.P_th_min_W * 1.01);
+
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('summary').innerHTML =
+  `<div style="margin-top:20px;font-size:1.1rem">
+     ${pass+fail} tests: <span class="${fail===0?'pass':'fail'}">${pass} pass, ${fail} fail</span>
+   </div>`;
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>02-envelope demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+  #viewport { width: 100vw; height: 100vh; }
+  #overlay {
+    position: fixed; top: 1rem; left: 1rem;
+    background: rgba(13,17,23,0.85); border: 1px solid #2a4a6a;
+    padding: 0.8rem 1.1rem; border-radius: 6px; font-size: 0.78rem; line-height: 1.8;
+    pointer-events: none; min-width: 220px;
+  }
+  #overlay h3 { color: #7ec8e3; margin-bottom: 0.3rem; font-size: 0.85rem; }
+  .dim  { color: #5a7a9a; }
+  .hi   { color: #7ed87e; }
+  #hint {
+    position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(13,17,23,0.7); border: 1px solid #2a3a4a;
+    padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.72rem; color: #4a6a8a;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="viewport"></div>
+<div id="overlay">
+  <h3>02-envelope — Gaussian Beam Surface</h3>
+  <div class="dim">System: <span id="sys">loading…</span></div>
+  <div class="dim">Transverse scale: <span id="tscale">—</span>×</div>
+  <div class="hi">Waists: <span id="waists">—</span></div>
+  <div class="dim">Camera: <span id="cam">—</span></div>
+</div>
+<div id="hint">Left-drag: rotate &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+  window.THREE_OrbitControls = THREE.OrbitControls;
+</script>
+
+<!-- Physics stack -->
+<script src="../../01-physics/01-matrices/matrices.js"></script>
+<script src="../../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../../01-physics/04-sampler/sampler.js"></script>
+
+<!-- Renderer modules -->
+<script src="../01-scene/scene.js"></script>
+<script src="envelope.js"></script>
+
+<script>
+// ── Optical system ────────────────────────────────────────────────────────────
+const SYSTEM = {
+  beam: { lambda: 1064e-9, w0: 1e-3, waistZ: 0 },
+  elements: [
+    { type: 'free', d: 0.5 },
+    { type: 'lens', f: 0.3 },
+    { type: 'free', d: 0.8 },
+  ],
+  sampling: { perSegment: 120 },
+};
+
+// ── Build physics data ────────────────────────────────────────────────────────
+const beamData = buildBeamData(SYSTEM);
+const { gaussian, meta, optics } = beamData;
+const L = meta.totalLength;
+
+// ── Build Three.js scene ──────────────────────────────────────────────────────
+const container = document.getElementById('viewport');
+const S = createScene(container);
+S.setSystemLength(L);
+
+// ── Envelope surface ──────────────────────────────────────────────────────────
+const envGroup = buildEnvelope(gaussian.samples, { radialSegments: 48 });
+S.addToScene(envGroup);
+const tScale = envGroup.userData.transverseScale;
+
+// ── Waist rings ───────────────────────────────────────────────────────────────
+const ringGroup = buildWaistRings(gaussian.waists, tScale);
+S.addToScene(ringGroup);
+
+// ── Optical element discs (lens) ──────────────────────────────────────────────
+const discRadius = meta.w0 * tScale * 3;
+optics.forEach(el => {
+  const geo = new THREE.CylinderGeometry(discRadius, discRadius, 0.001, 48);
+  geo.rotateX(Math.PI / 2);
+  const mat = new THREE.MeshPhongMaterial({
+    color: 0xc8a84b, emissive: 0x201000,
+    transparent: true, opacity: 0.55,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(0, 0, el.z);
+  S.addToScene(mesh);
+
+  // Thin ring outline around disc
+  const ringGeo = new THREE.TorusGeometry(discRadius, discRadius * 0.04, 6, 48);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xe3c07e });
+  const ring    = new THREE.Mesh(ringGeo, ringMat);
+  ring.position.set(0, 0, el.z);
+  S.addToScene(ring);
+});
+
+// ── Overlay info ──────────────────────────────────────────────────────────────
+document.getElementById('sys').textContent =
+  `λ=${(meta.lambda*1e9).toFixed(0)}nm  w₀=${(meta.w0*1e3).toFixed(1)}mm  L=${L.toFixed(2)}m`;
+document.getElementById('tscale').textContent = tScale.toFixed(1);
+document.getElementById('waists').textContent = gaussian.waists.length
+  ? gaussian.waists.map(w => `z=${(w.z*100).toFixed(0)}cm`).join(', ')
+  : 'none';
+
+S.controls.addEventListener('change', () => {
+  const p = S.camera.position;
+  document.getElementById('cam').textContent =
+    `(${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`;
+});
+
+S.animate();
+</script>
+</body>
+</html>

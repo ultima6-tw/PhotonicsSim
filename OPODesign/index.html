@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OPO Design Calculator</title>
+<style>
+* { box-sizing: border-box; margin:0; padding:0; }
+body {
+  background: #080f18; color: #9ab4c8;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.78rem; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+header {
+  background: #0a1520; border-bottom: 1px solid #1a2a3a;
+  padding: 6px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+header h1 { font-size: 0.85rem; color: #c084fc; letter-spacing: 0.05em; }
+header .sub { color: #3a6070; font-size: 0.7rem; }
+
+.layout { display: flex; flex: 1; min-height: 0; }
+
+/* ─── Left panel ─── */
+.left {
+  width: 300px; min-width: 280px; background: #090e17;
+  border-right: 1px solid #1a2a3a;
+  display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
+}
+.section { border-bottom: 1px solid #111c28; }
+.section-head {
+  padding: 6px 12px; background: #0b1825;
+  color: #4a7a9a; font-size: 0.7rem; letter-spacing: 0.06em;
+  text-transform: uppercase; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.section-body { padding: 8px 12px; }
+.row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.row label { color: #4a7a9a; flex: 0 0 90px; font-size: 0.72rem; }
+.row input[type=number], .row select {
+  flex: 1; background: #0c1825; border: 1px solid #1a2a3a;
+  color: #9ab4c8; padding: 3px 6px; border-radius: 3px;
+  font-family: inherit; font-size: 0.75rem;
+}
+.row input:focus, .row select:focus { outline: none; border-color: #3a6a9a; }
+.row .unit { color: #2a4050; font-size: 0.68rem; flex-shrink: 0; }
+
+.preset-strip { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.preset-btn {
+  font-size: 0.62rem; padding: 2px 7px;
+  background: #0a1520; border: 1px solid #1a3a5a; color: #4a8aaa;
+  border-radius: 3px; cursor: pointer; font-family: inherit;
+}
+.preset-btn:hover { border-color: #4a8aaa; color: #7abcdc; }
+.preset-btn.active { border-color: #c084fc; color: #c084fc; background: #1a0a2a; }
+
+.mode-toggle { display: flex; gap: 4px; }
+.mode-btn {
+  flex: 1; padding: 3px 0; text-align: center;
+  background: #0c1825; border: 1px solid #1a2a3a;
+  color: #4a7a9a; border-radius: 3px; cursor: pointer; font-family: inherit;
+  font-size: 0.72rem;
+}
+.mode-btn.active { background: #1a2040; border-color: #4a7aaa; color: #9ab4c8; }
+
+/* ─── Right panel ─── */
+.right {
+  flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+}
+.results-bar {
+  background: #0b1421; border-bottom: 1px solid #1a2a3a;
+  padding: 6px 16px; display: flex; gap: 24px; flex-shrink: 0; flex-wrap: wrap;
+}
+.metric { display: flex; flex-direction: column; gap: 1px; }
+.metric .label { font-size: 0.62rem; color: #3a6070; text-transform: uppercase; }
+.metric .value { font-size: 0.92rem; color: #c084fc; font-weight: bold; }
+.metric .value.ok { color: #4a9a4a; }
+.metric .value.warn { color: #e09a40; }
+.metric .sub-val { font-size: 0.68rem; color: #4a7a9a; margin-top: 1px; }
+
+.plots { flex: 1; display: flex; gap: 0; min-height: 0; }
+.plot-panel {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
+  border-right: 1px solid #1a2a3a; padding: 8px;
+}
+.plot-panel:last-child { border-right: none; }
+.plot-title { font-size: 0.68rem; color: #4a7a9a; margin-bottom: 6px; text-align: center; }
+.plot-svg { flex: 1; width: 100%; display: block; }
+
+/* ─── Stability badge ─── */
+.badge {
+  display: inline-block; padding: 1px 6px; border-radius: 2px;
+  font-size: 0.65rem; font-weight: bold;
+}
+.badge.stable { background: #0a2a0a; border: 1px solid #2a5a2a; color: #4a9a4a; }
+.badge.unstable { background: #2a0a0a; border: 1px solid #5a2a2a; color: #cc4444; }
+
+.hint { color: #2a4050; font-size: 0.66rem; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- ── CavitySim deps ───────────────────────────────────────────────────── -->
+<script src="../CavitySim/01-elements/elements.js"></script>
+<script src="../CavitySim/02-physics/roundtrip.js"></script>
+<script src="../CavitySim/02-physics/eigenmode.js"></script>
+<script src="../CavitySim/02-physics/stability.js"></script>
+<script src="../CavitySim/03-solver/cavity-solver.js"></script>
+
+<!-- ── NonlinearSim deps ──────────────────────────────────────────────── -->
+<script src="../NonlinearSim/02-physics/bk-focus.js"></script>
+<script src="../NonlinearSim/02-physics/opo-threshold.js"></script>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header>
+  <h1>OPO Design Calculator</h1>
+  <span class="sub">CavitySim × NonlinearSim — threshold &amp; focusing optimization</span>
+</header>
+
+<div class="layout">
+
+<!-- ════════════════════════════════════════════════════════════════
+     LEFT PANEL
+═════════════════════════════════════════════════════════════════ -->
+<div class="left" id="leftPanel">
+
+  <!-- Crystal preset -->
+  <div class="section">
+    <div class="section-head">Crystal &amp; Wavelengths</div>
+    <div class="section-body">
+      <div class="preset-strip" id="crystalPresets">
+        <button class="preset-btn active" data-preset="ktp">KTP 1064</button>
+        <button class="preset-btn" data-preset="bbo">BBO 532→790</button>
+        <button class="preset-btn" data-preset="lbo">LBO 1064</button>
+        <button class="preset-btn" data-preset="custom">Custom</button>
+      </div>
+
+      <div class="row">
+        <label>Pump λ</label>
+        <input type="number" id="lambda_p" value="1064" min="200" max="5000" step="1">
+        <span class="unit">nm</span>
+      </div>
+      <div class="row">
+        <label>Signal λ</label>
+        <input type="number" id="lambda_s" value="1500" min="200" max="10000" step="1">
+        <span class="unit">nm</span>
+      </div>
+      <div class="row">
+        <label>Idler λ</label>
+        <input type="number" id="lambda_i" value="3540" min="200" max="20000" step="1" readonly style="color:#3a6070">
+        <span class="unit">nm</span>
+      </div>
+      <div class="hint" id="ecHint"></div>
+      <div class="row">
+        <label>d_eff</label>
+        <input type="number" id="d_eff" value="3.18" min="0.01" max="100" step="0.01">
+        <span class="unit">pm/V</span>
+      </div>
+      <div class="row">
+        <label>n_pump</label>
+        <input type="number" id="n_p" value="1.745" min="1.0" max="5.0" step="0.001">
+        <span class="unit"></span>
+      </div>
+      <div class="row">
+        <label>n_signal</label>
+        <input type="number" id="n_s" value="1.738" min="1.0" max="5.0" step="0.001">
+        <span class="unit"></span>
+      </div>
+      <div class="row">
+        <label>n_idler</label>
+        <input type="number" id="n_i" value="1.704" min="1.0" max="5.0" step="0.001">
+        <span class="unit"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Crystal length -->
+  <div class="section">
+    <div class="section-head">Crystal Length</div>
+    <div class="section-body">
+      <div class="row">
+        <label>L</label>
+        <input type="number" id="L_mm" value="20" min="1" max="100" step="0.5">
+        <span class="unit">mm</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cavity losses -->
+  <div class="section">
+    <div class="section-head">Cavity &amp; Mode</div>
+    <div class="section-body">
+      <div class="row" style="margin-bottom:8px">
+        <label>OPO mode</label>
+        <div class="mode-toggle" style="flex:1">
+          <button class="mode-btn active" data-mode="DRO" id="modeDRO">DRO</button>
+          <button class="mode-btn"        data-mode="SRO" id="modeSRO">SRO</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>δ signal</label>
+        <input type="number" id="delta_s" value="1.0" min="0.1" max="50" step="0.1">
+        <span class="unit">%</span>
+      </div>
+      <div class="row" id="rowDeltaI">
+        <label>δ idler</label>
+        <input type="number" id="delta_i" value="1.0" min="0.1" max="50" step="0.1">
+        <span class="unit">%</span>
+      </div>
+      <div class="hint">Round-trip power loss per pass (OC transmission + parasitic)</div>
+    </div>
+  </div>
+
+  <!-- Beam waist -->
+  <div class="section">
+    <div class="section-head">Pump Beam</div>
+    <div class="section-body">
+      <div class="row" style="margin-bottom:6px">
+        <label>Source</label>
+        <div class="mode-toggle" style="flex:1">
+          <button class="mode-btn active" data-src="manual" id="srcManual">Manual w₀</button>
+          <button class="mode-btn"        data-src="cavity" id="srcCavity">CavitySim zR</button>
+        </div>
+      </div>
+
+      <!-- Manual w₀ -->
+      <div id="panelManual">
+        <div class="row">
+          <label>w₀</label>
+          <input type="number" id="w0_um" value="50" min="1" max="2000" step="1">
+          <span class="unit">µm</span>
+        </div>
+      </div>
+
+      <!-- CavitySim mini designer -->
+      <div id="panelCavity" style="display:none">
+        <div class="row">
+          <label>R₁</label>
+          <input type="number" id="cav_R1" value="100" min="1" max="5000" step="1" style="flex:1">
+          <span class="unit">mm</span>
+          <label style="flex:0;display:flex;align-items:center;gap:3px;color:#3a6070;white-space:nowrap">
+            <input type="checkbox" id="cav_flat1" style="margin:0"> flat
+          </label>
+        </div>
+        <div class="row">
+          <label>R₂</label>
+          <input type="number" id="cav_R2" value="100" min="1" max="5000" step="1" style="flex:1">
+          <span class="unit">mm</span>
+          <label style="flex:0;display:flex;align-items:center;gap:3px;color:#3a6070;white-space:nowrap">
+            <input type="checkbox" id="cav_flat2" style="margin:0"> flat
+          </label>
+        </div>
+        <div class="row">
+          <label>L_cav</label>
+          <input type="number" id="cav_L" value="200" min="10" max="2000" step="1">
+          <span class="unit">mm</span>
+        </div>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
+          <span id="cavBadge" class="badge">—</span>
+          <span id="cavTrace" style="color:#3a6070;font-size:0.68rem">|th|=—</span>
+        </div>
+        <div id="cavResult" class="hint" style="color:#5a9a6a;margin-top:4px"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /left -->
+
+
+<!-- ════════════════════════════════════════════════════════════════
+     RIGHT PANEL
+═════════════════════════════════════════════════════════════════ -->
+<div class="right">
+
+  <!-- Results bar -->
+  <div class="results-bar" id="resultsBar">
+    <div class="metric">
+      <span class="label">P_th (current)</span>
+      <span class="value" id="rPth">—</span>
+      <span class="sub-val" id="rMode">DRO</span>
+    </div>
+    <div class="metric">
+      <span class="label">P_th min (optimal w₀)</span>
+      <span class="value ok" id="rPthMin">—</span>
+      <span class="sub-val" id="rW0opt">—</span>
+    </div>
+    <div class="metric">
+      <span class="label">Focusing ξ</span>
+      <span class="value" id="rXi">—</span>
+      <span class="sub-val" id="rH">h(ξ) = —</span>
+    </div>
+    <div class="metric">
+      <span class="label">Γ²_spec</span>
+      <span class="value" id="rGamma">—</span>
+      <span class="sub-val">W⁻¹</span>
+    </div>
+    <div class="metric">
+      <span class="label">w₀_opt</span>
+      <span class="value" id="rW0optVal">—</span>
+      <span class="sub-val">µm</span>
+    </div>
+  </div>
+
+  <!-- Two plots -->
+  <div class="plots">
+    <div class="plot-panel">
+      <div class="plot-title">P_th vs Crystal Length L  (fixed w₀)</div>
+      <svg class="plot-svg" id="plotL" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="plot-panel">
+      <div class="plot-title">P_th vs Beam Waist w₀  (fixed L)</div>
+      <svg class="plot-svg" id="plotW" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </div>
+
+</div><!-- /right -->
+</div><!-- /layout -->
+
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<script>
+// ── Crystal presets ───────────────────────────────────────────────────────────
+const PRESETS = {
+  ktp: {
+    lambda_p: 1064, lambda_s: 1500,
+    d_eff: 3.18, n_p: 1.745, n_s: 1.738, n_i: 1.704,
+    label: 'KTP Type-II OPO (1064→1500+3540 nm)',
+  },
+  bbo: {
+    lambda_p: 532, lambda_s: 790,
+    d_eff: 2.00, n_p: 1.670, n_s: 1.660, n_i: 1.650,
+    label: 'BBO Type-I OPO (532→790+1672 nm, Rb D2)',
+  },
+  lbo: {
+    lambda_p: 1064, lambda_s: 1540,
+    d_eff: 0.84, n_p: 1.607, n_s: 1.598, n_i: 1.553,
+    label: 'LBO Type-I OPO (1064→1540+3400 nm approx)',
+  },
+  custom: null,
+};
+
+// ── DOM helpers ───────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function val(id)  { return parseFloat($(id).value); }
+function set(id, v, decimals = 3) {
+  if ($(id).readOnly || $(id).tagName === 'SPAN') {
+    $(id).textContent = typeof v === 'number' ? v.toFixed(decimals) : v;
+  } else {
+    $(id).value = typeof v === 'number' ? v.toFixed(decimals) : v;
+  }
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let mode = 'DRO', beamSrc = 'manual', activePreset = 'ktp';
+
+// ── Cavity mode solver ────────────────────────────────────────────────────────
+function solveCavityMode() {
+  const flat1    = $('cav_flat1').checked;
+  const flat2    = $('cav_flat2').checked;
+  const R1_m     = flat1 ? Infinity : val('cav_R1') * 1e-3;
+  const R2_m     = flat2 ? Infinity : val('cav_R2') * 1e-3;
+  const L_cav_m  = val('cav_L')  * 1e-3;
+  const L_crys_m = val('L_mm')   * 1e-3;
+  const n_crys   = val('n_p');
+  const lam_nm   = val('lambda_p');
+  const lam_m    = lam_nm * 1e-9;
+
+  if (L_cav_m <= L_crys_m) return null;
+
+  const L_air_m = (L_cav_m - L_crys_m) / 2;
+
+  const mirror1    = makeElement(flat1 ? 'flatMirror' : 'curvedMirror',
+                                  flat1 ? {} : { R_m: R1_m });
+  const mirror2    = makeElement(flat2 ? 'flatMirror' : 'curvedMirror',
+                                  flat2 ? {} : { R_m: R2_m });
+  const intracavity = [
+    makeElement('freeSpace',  { L_m: L_air_m }),
+    makeElement('gainMedium', { n: n_crys, t_m: L_crys_m }),
+    makeElement('freeSpace',  { L_m: L_air_m }),
+  ];
+
+  const res = CAVITY.solve({ mirror1, intracavity, mirror2, lambda_nm: lam_nm });
+
+  if (!res.stable || !res.eigenmode) {
+    return { stable: false, trace_half: res.trace_half };
+  }
+
+  // Propagate eigenmode from mirror1 → crystal center
+  const q0    = res.eigenmode.q;
+  const M_air = makeElement('freeSpace', { L_m: L_air_m }).M;
+  const q1    = propagateQ(q0, M_air);
+  const M_half = [[1, L_crys_m / (2 * n_crys)], [0, 1]];
+  const q_cen = propagateQ(q1, M_half);
+  const w0_um = beamRadius(q_cen, lam_m) * 1e6;
+
+  return {
+    stable:     true,
+    trace_half: res.trace_half,
+    w0_um,
+    w_m1_um:    res.eigenmode.w_m * 1e6,
+  };
+}
+
+// ── Idler from energy conservation ───────────────────────────────────────────
+function updateIdler() {
+  const lp = val('lambda_p'), ls = val('lambda_s');
+  if (lp > 0 && ls > 0 && ls > lp) {
+    const li = 1 / (1/lp - 1/ls);
+    $('lambda_i').value = li.toFixed(1);
+    const ec = Math.abs(1/lp - 1/ls - 1/li);
+    $('ecHint').textContent = `1/λ_p - 1/λ_s - 1/λ_i = ${ec.toExponential(1)} nm⁻¹`;
+    $('ecHint').style.color = '#2a8a4a';
+  } else {
+    $('ecHint').textContent = 'Warning: λ_signal must be > λ_pump';
+    $('ecHint').style.color = '#cc4444';
+  }
+}
+
+// ── Compute & render ──────────────────────────────────────────────────────────
+function compute() {
+  updateIdler();
+
+  const d_eff     = val('d_eff');
+  const lambda_p  = val('lambda_p');
+  const lambda_s  = val('lambda_s');
+  const lambda_i  = parseFloat($('lambda_i').value);
+  const n_p       = val('n_p'), n_s = val('n_s'), n_i = val('n_i');
+  const L_mm      = val('L_mm');
+  const delta_s   = val('delta_s') / 100;
+  const delta_i   = val('delta_i') / 100;
+
+  // Beam waist
+  let w0_um;
+  if (beamSrc === 'cavity') {
+    const cav = solveCavityMode();
+    const badge = $('cavBadge');
+    const trace = $('cavTrace');
+    const hint  = $('cavResult');
+    if (!cav) {
+      badge.textContent = 'INVALID'; badge.className = 'badge unstable';
+      trace.textContent = ''; hint.textContent = 'L_cav must be > crystal length';
+      return;
+    }
+    trace.textContent = `|th| = ${Math.abs(cav.trace_half).toFixed(4)}`;
+    if (!cav.stable) {
+      badge.textContent = 'UNSTABLE'; badge.className = 'badge unstable';
+      hint.textContent = '';
+      return;
+    }
+    badge.textContent = 'STABLE'; badge.className = 'badge stable';
+    w0_um = cav.w0_um;
+    hint.textContent = `w₀@crystal = ${w0_um.toFixed(1)} µm  |  w@M1 = ${cav.w_m1_um.toFixed(1)} µm`;
+  } else {
+    w0_um = val('w0_um');
+  }
+
+  if (!isFinite(w0_um) || w0_um <= 0 || !isFinite(lambda_i) || lambda_i <= 0) return;
+
+  const base = { d_eff_pmV: d_eff, lambda_p_nm: lambda_p, lambda_s_nm: lambda_s,
+                  lambda_i_nm: lambda_i, n_p, n_s, n_i, delta_s, delta_i, mode };
+
+  // Current operating point
+  const t = opo_threshold({ ...base, L_mm, w0_um });
+
+  // Optimal w₀ for current L
+  const opt = opo_optimalW0({ ...base, L_mm });
+
+  // Update results bar
+  $('rPth').textContent = t.P_th_W < 1
+    ? (t.P_th_W * 1e3).toFixed(1) + ' mW'
+    : t.P_th_W.toFixed(2) + ' W';
+  $('rMode').textContent = mode;
+  $('rPthMin').textContent = opt.P_th_min_W < 1
+    ? (opt.P_th_min_W * 1e3).toFixed(1) + ' mW'
+    : opt.P_th_min_W.toFixed(2) + ' W';
+  $('rW0opt').textContent = `w₀_opt = ${opt.w0_opt_um.toFixed(1)} µm`;
+  $('rXi').textContent = t.xi.toFixed(3);
+  $('rH').textContent  = `h(ξ) = ${t.h.toFixed(4)}`;
+  $('rGamma').textContent = t.Gamma2.toExponential(3);
+  $('rW0optVal').textContent = opt.w0_opt_um.toFixed(1);
+
+  // Plot 1: P_th vs L  (fixed w₀)
+  const L_min = 2, L_max = Math.max(60, L_mm * 1.5);
+  const scanL = opo_scanL({ ...base, w0_um }, L_min, L_max, 200);
+  drawPlotL(scanL, L_mm, t.P_th_W);
+
+  // Plot 2: P_th vs w₀  (fixed L)
+  const w0_opt = opt.w0_opt_um;
+  const w_min = Math.max(2, w0_opt * 0.15);
+  const w_max = w0_opt * 6;
+  const scanW = opo_scanW0({ ...base, L_mm }, w_min, w_max, 300);
+  drawPlotW(scanW, w0_um, t.P_th_W, w0_opt, opt.P_th_min_W);
+}
+
+// ── SVG Plot helpers ──────────────────────────────────────────────────────────
+const PAD = { t: 18, r: 14, b: 32, l: 54 };
+const W = 400, H = 300;
+const PW = W - PAD.l - PAD.r, PH = H - PAD.t - PAD.b;
+
+function clearSVG(svgEl) {
+  while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+}
+
+function drawGrid(svg, xMin, xMax, yMin, yMax, xLabel, yLabel) {
+  const xTicks = 5, yTicks = 5;
+  const g = ns => document.createElementNS('http://www.w3.org/2000/svg', ns);
+
+  function px(x) { return PAD.l + (x - xMin) / (xMax - xMin) * PW; }
+  function py(y) { return PAD.t + PH - (y - yMin) / (yMax - yMin) * PH; }
+
+  // Grid lines
+  for (let i = 0; i <= yTicks; i++) {
+    const y = yMin + (yMax - yMin) * i / yTicks;
+    const line = g('line');
+    line.setAttribute('x1', PAD.l); line.setAttribute('x2', PAD.l + PW);
+    line.setAttribute('y1', py(y)); line.setAttribute('y2', py(y));
+    line.setAttribute('stroke', '#111c28'); line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+    const t = g('text');
+    t.setAttribute('x', PAD.l - 4); t.setAttribute('y', py(y) + 3.5);
+    t.setAttribute('text-anchor', 'end'); t.setAttribute('font-size', '9');
+    t.setAttribute('fill', '#3a6070'); t.setAttribute('font-family', 'monospace');
+    t.textContent = formatNum(y);
+    svg.appendChild(t);
+  }
+  for (let i = 0; i <= xTicks; i++) {
+    const x = xMin + (xMax - xMin) * i / xTicks;
+    const line = g('line');
+    line.setAttribute('x1', px(x)); line.setAttribute('x2', px(x));
+    line.setAttribute('y1', PAD.t); line.setAttribute('y2', PAD.t + PH);
+    line.setAttribute('stroke', '#111c28'); line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+    const t = g('text');
+    t.setAttribute('x', px(x)); t.setAttribute('y', PAD.t + PH + 14);
+    t.setAttribute('text-anchor', 'middle'); t.setAttribute('font-size', '9');
+    t.setAttribute('fill', '#3a6070'); t.setAttribute('font-family', 'monospace');
+    t.textContent = formatNum(x);
+    svg.appendChild(t);
+  }
+  // Axis labels
+  const xl = g('text');
+  xl.setAttribute('x', PAD.l + PW/2); xl.setAttribute('y', H - 2);
+  xl.setAttribute('text-anchor', 'middle'); xl.setAttribute('font-size', '9');
+  xl.setAttribute('fill', '#4a7a9a'); xl.setAttribute('font-family', 'monospace');
+  xl.textContent = xLabel;
+  svg.appendChild(xl);
+  const yl = g('text');
+  yl.setAttribute('x', 9); yl.setAttribute('y', PAD.t + PH/2);
+  yl.setAttribute('text-anchor', 'middle'); yl.setAttribute('font-size', '9');
+  yl.setAttribute('fill', '#4a7a9a'); yl.setAttribute('font-family', 'monospace');
+  yl.setAttribute('transform', `rotate(-90, 9, ${PAD.t + PH/2})`);
+  yl.textContent = yLabel;
+  svg.appendChild(yl);
+
+  return { px, py };
+}
+
+function formatNum(v) {
+  if (v === 0) return '0';
+  if (Math.abs(v) >= 1000) return (v/1000).toFixed(1)+'k';
+  if (Math.abs(v) >= 1)   return v.toFixed(Math.abs(v)<10?1:0);
+  if (Math.abs(v) >= 0.1) return v.toFixed(2);
+  return v.toExponential(1);
+}
+
+function makePath(points, fill = 'none', stroke = '#7ec8e3', sw = 1.5) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  el.setAttribute('fill', fill);
+  el.setAttribute('stroke', stroke);
+  el.setAttribute('stroke-width', sw);
+  el.setAttribute('d', points);
+  return el;
+}
+
+function makeCircle(cx, cy, r, fill, stroke) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  el.setAttribute('cx', cx); el.setAttribute('cy', cy); el.setAttribute('r', r);
+  el.setAttribute('fill', fill); el.setAttribute('stroke', stroke);
+  el.setAttribute('stroke-width', '1.5');
+  return el;
+}
+
+function drawPlotL(scan, curL, curP) {
+  const svg = $('plotL');
+  clearSVG(svg);
+
+  const Ps = scan.map(r => r.P_th_W * 1e3);  // mW
+  const Ls = scan.map(r => r.L_mm);
+  const yMax = Math.min(Ps[0] * 1.1, Ps[0]);  // top is smallest L
+  const yMin = 0;
+  const pMax = Math.max(...Ps.slice(0,1));
+  const yRange = [0, pMax * 1.05];
+  const xRange = [Ls[0], Ls[Ls.length-1]];
+
+  const { px, py } = drawGrid(svg, xRange[0], xRange[1], yRange[0], yRange[1],
+                               'L (mm)', 'P_th (mW)');
+
+  // Curve
+  let d = '';
+  scan.forEach((r, i) => {
+    const x = px(r.L_mm), y = py(r.P_th_W * 1e3);
+    d += (i === 0 ? 'M' : 'L') + `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  svg.appendChild(makePath(d, 'none', '#4a9aaa', 1.5));
+
+  // Current point marker
+  const cpx = px(curL), cpy = py(curP * 1e3);
+  if (cpx >= PAD.l && cpx <= PAD.l + PW && cpy >= PAD.t && cpy <= PAD.t + PH) {
+    svg.appendChild(makeCircle(cpx, cpy, 4, '#c084fc', '#c084fc'));
+  }
+}
+
+function drawPlotW(scan, curW, curP, optW, optP) {
+  const svg = $('plotW');
+  clearSVG(svg);
+
+  const Ps = scan.map(r => r.P_th_W * 1e3);
+  const Ws = scan.map(r => r.w0_um);
+  const yMax = Math.max(...Ps) * 1.05;
+
+  const { px, py } = drawGrid(svg, Ws[0], Ws[Ws.length-1], 0, yMax,
+                               'w₀ (µm)', 'P_th (mW)');
+
+  // Curve
+  let d = '';
+  scan.forEach((r, i) => {
+    const x = px(r.w0_um), y = py(r.P_th_W * 1e3);
+    d += (i === 0 ? 'M' : 'L') + `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  svg.appendChild(makePath(d, 'none', '#4a9aaa', 1.5));
+
+  // Optimal point (green)
+  const opx = px(optW), opy = py(optP * 1e3);
+  if (opx >= PAD.l && opx <= PAD.l + PW) {
+    // vertical line
+    const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    ln.setAttribute('x1', opx); ln.setAttribute('x2', opx);
+    ln.setAttribute('y1', PAD.t); ln.setAttribute('y2', PAD.t + PH);
+    ln.setAttribute('stroke', '#2a7a3a'); ln.setAttribute('stroke-width', '1');
+    ln.setAttribute('stroke-dasharray', '3,3');
+    svg.appendChild(ln);
+    svg.appendChild(makeCircle(opx, opy, 4, '#4a9a4a', '#4a9a4a'));
+  }
+
+  // Current point (purple)
+  const cpx = px(curW), cpy = py(curP * 1e3);
+  if (cpx >= PAD.l && cpx <= PAD.l + PW && cpy >= PAD.t && cpy <= PAD.t + PH) {
+    svg.appendChild(makeCircle(cpx, cpy, 4, '#c084fc', '#c084fc'));
+  }
+}
+
+// ── Preset logic ──────────────────────────────────────────────────────────────
+function applyPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  $('lambda_p').value = p.lambda_p;
+  $('lambda_s').value = p.lambda_s;
+  $('d_eff').value    = p.d_eff;
+  $('n_p').value      = p.n_p;
+  $('n_s').value      = p.n_s;
+  $('n_i').value      = p.n_i;
+  document.querySelectorAll('#crystalPresets .preset-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.preset === key));
+  activePreset = key;
+  compute();
+}
+
+// ── Event bindings ────────────────────────────────────────────────────────────
+document.querySelectorAll('#crystalPresets .preset-btn').forEach(b =>
+  b.addEventListener('click', () => applyPreset(b.dataset.preset)));
+
+['lambda_p', 'lambda_s', 'd_eff', 'n_p', 'n_s', 'n_i',
+ 'L_mm', 'delta_s', 'delta_i', 'w0_um',
+ 'cav_R1', 'cav_R2', 'cav_L'].forEach(id => {
+  $(id).addEventListener('input', () => { activePreset = 'custom'; compute(); });
+});
+
+// Flat mirror checkboxes: toggle R input disabled state + recompute
+['cav_flat1', 'cav_flat2'].forEach(id => {
+  const rid = id === 'cav_flat1' ? 'cav_R1' : 'cav_R2';
+  $(id).addEventListener('change', () => {
+    $(rid).disabled = $(id).checked;
+    $(rid).style.color = $(id).checked ? '#2a4050' : '';
+    compute();
+  });
+});
+
+// Mode toggle
+document.querySelectorAll('.mode-btn[data-mode]').forEach(b =>
+  b.addEventListener('click', () => {
+    mode = b.dataset.mode;
+    document.querySelectorAll('.mode-btn[data-mode]').forEach(x =>
+      x.classList.toggle('active', x.dataset.mode === mode));
+    $('rowDeltaI').style.display = mode === 'SRO' ? 'none' : '';
+    compute();
+  }));
+
+// Beam source toggle
+document.querySelectorAll('.mode-btn[data-src]').forEach(b =>
+  b.addEventListener('click', () => {
+    beamSrc = b.dataset.src;
+    document.querySelectorAll('.mode-btn[data-src]').forEach(x =>
+      x.classList.toggle('active', x.dataset.src === beamSrc));
+    $('panelManual').style.display = beamSrc === 'manual' ? '' : 'none';
+    $('panelCavity').style.display = beamSrc === 'cavity' ? '' : 'none';
+    compute();
+  }));
+
+// ── Initial render ────────────────────────────────────────────────────────────
+compute();
+</script>
+</body>
+</html>

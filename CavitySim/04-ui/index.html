@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CavitySim — Laser Resonator Designer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Menlo', 'Consolas', monospace;
+  background: #0d1117; color: #c9d1d9;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+header {
+  background: #161b22; border-bottom: 1px solid #30363d;
+  padding: 10px 20px;
+  display: flex; align-items: center; gap: 16px;
+}
+header h1 { color: #7ec8e3; font-size: 1.1em; }
+.badge {
+  padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: bold;
+}
+.badge-stable   { background: #0d3d1f; color: #3fb950; border: 1px solid #3fb950; }
+.badge-unstable { background: #3d0d0d; color: #f85149; border: 1px solid #f85149; }
+.badge-boundary { background: #3d2d00; color: #d29922; border: 1px solid #d29922; }
+
+/* ── Main layout ── */
+main {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  overflow: hidden;
+}
+
+/* ── Left panel ── */
+.panel {
+  background: #0d1117;
+  border-right: 1px solid #30363d;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+.section-title {
+  color: #7ec8e3; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.08em; margin-bottom: 6px;
+}
+
+/* wavelength row */
+.row { display: flex; align-items: center; gap: 8px; }
+label { color: #8b949e; font-size: 12px; min-width: 80px; }
+input[type=number] {
+  background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+  border-radius: 4px; padding: 4px 8px; font-family: inherit;
+  font-size: 12px; width: 90px;
+}
+input[type=number]:focus { outline: none; border-color: #7ec8e3; }
+.unit { color: #6e7681; font-size: 11px; }
+
+/* Elements table */
+table.elem-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+table.elem-table th {
+  background: #161b22; color: #7ec8e3; padding: 4px 6px;
+  text-align: left; border-bottom: 1px solid #30363d;
+}
+table.elem-table td {
+  padding: 4px 6px; border-bottom: 1px solid #1a2a3a; vertical-align: middle;
+}
+.elem-type { color: #d29922; }
+select, input.param-input {
+  background: #161b22; border: 1px solid #30363d; color: #c9d1d9;
+  border-radius: 3px; padding: 2px 5px; font-family: inherit; font-size: 11px;
+}
+select:focus, input.param-input:focus { outline: none; border-color: #7ec8e3; }
+input.param-input { width: 60px; }
+.btn-del {
+  background: none; border: none; color: #f85149; cursor: pointer;
+  font-size: 13px; padding: 0 4px;
+}
+.btn-del:hover { color: #ff7b72; }
+
+/* Add element button */
+.btn-add {
+  background: #161b22; border: 1px solid #30363d; color: #7ec8e3;
+  border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 12px;
+  font-family: inherit; align-self: flex-start;
+}
+.btn-add:hover { border-color: #7ec8e3; }
+
+/* Results panel */
+.results { background: #161b22; border-radius: 6px; padding: 12px; }
+.result-row { display: flex; justify-content: space-between; margin: 4px 0; font-size: 12px; }
+.result-label { color: #8b949e; }
+.result-val   { color: #e6edf3; }
+
+/* Export box */
+.export-box {
+  background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+  padding: 8px; font-size: 11px; color: #8b949e; white-space: pre;
+  cursor: pointer; user-select: all;
+}
+.export-box:hover { border-color: #7ec8e3; }
+
+/* ── Right panel: plots ── */
+.plots {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  background: #0d1117;
+}
+.plot-area {
+  position: relative; overflow: hidden;
+  border-bottom: 1px solid #30363d;
+}
+.plot-area:last-child { border-bottom: none; }
+.plot-title {
+  position: absolute; top: 8px; left: 12px;
+  color: #4a7a9a; font-size: 11px; text-transform: uppercase;
+}
+svg.plot { width: 100%; height: 100%; }
+
+/* ── Footer ── */
+footer {
+  background: #161b22; border-top: 1px solid #30363d;
+  padding: 5px 16px; font-size: 11px; color: #6e7681;
+}
+
+/* Presets */
+.presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-preset {
+  background: #161b22; border: 1px solid #30363d; color: #8b949e;
+  border-radius: 3px; padding: 3px 8px; cursor: pointer; font-size: 11px;
+  font-family: inherit;
+}
+.btn-preset:hover { border-color: #7ec8e3; color: #7ec8e3; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CavitySim</h1>
+  <span id="stability-badge" class="badge badge-stable">Stable</span>
+  <span id="header-info" style="color:#6e7681;font-size:12px;margin-left:8px;"></span>
+</header>
+
+<main>
+  <!-- ── Left panel ── -->
+  <div class="panel">
+
+    <div>
+      <div class="section-title">Wavelength</div>
+      <div class="row">
+        <label>λ</label>
+        <input type="number" id="lambda-nm" value="1064" min="100" max="5000" step="1">
+        <span class="unit">nm</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Presets</div>
+      <div class="presets">
+        <button class="btn-preset" onclick="loadPreset('hemi')">Hemispherical</button>
+        <button class="btn-preset" onclick="loadPreset('symm')">Symmetric</button>
+        <button class="btn-preset" onclick="loadPreset('bowTie')">With Lens</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Cavity Elements  <span style="color:#6e7681;font-size:10px">(top→bottom = left→right)</span></div>
+      <table class="elem-table">
+        <thead>
+          <tr><th>Role</th><th>Type</th><th>Param</th><th></th></tr>
+        </thead>
+        <tbody id="elem-tbody"></tbody>
+      </table>
+      <button class="btn-add" onclick="addElement()" style="margin-top:8px">+ Add intracavity element</button>
+    </div>
+
+    <div>
+      <div class="section-title">Results</div>
+      <div class="results" id="results-panel">
+        <div class="result-row"><span class="result-label">Tr(M)/2</span><span class="result-val" id="r-trace">—</span></div>
+        <div class="result-row"><span class="result-label">g₁g₂</span><span class="result-val" id="r-g1g2">—</span></div>
+        <div class="result-row"><span class="result-label">w at Mirror 1</span><span class="result-val" id="r-w1">—</span></div>
+        <div class="result-row"><span class="result-label">w at Mirror 2</span><span class="result-val" id="r-w2">—</span></div>
+        <div class="result-row"><span class="result-label">Rayleigh range z_R</span><span class="result-val" id="r-zr">—</span></div>
+        <div class="result-row"><span class="result-label">Cavity length L</span><span class="result-val" id="r-L">—</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Export → OpticSim</div>
+      <div class="export-box" id="export-box" title="Click to copy">—</div>
+      <button id="btn-copy-url"
+        style="margin-top:6px;width:100%;padding:5px 0;background:#0d1117;
+               border:1px solid #30363d;border-radius:4px;color:#7ec8e3;
+               font-family:inherit;font-size:11px;cursor:pointer"
+        disabled>Copy OpticSim URL</button>
+    </div>
+
+  </div>
+
+  <!-- ── Right panel: plots ── -->
+  <div class="plots">
+    <div class="plot-area">
+      <div class="plot-title">Beam Profile  w(z)</div>
+      <svg class="plot" id="svg-profile"></svg>
+    </div>
+    <div class="plot-area">
+      <div class="plot-title">Stability Diagram  g₁g₂</div>
+      <svg class="plot" id="svg-stability"></svg>
+    </div>
+  </div>
+</main>
+
+<footer id="footer-msg">CavitySim · ABCD cavity mode solver · PhotonicsSim</footer>
+
+<!-- ── Scripts ── -->
+<script src="../01-elements/elements.js"></script>
+<script src="../02-physics/roundtrip.js"></script>
+<script src="../02-physics/eigenmode.js"></script>
+<script src="../02-physics/stability.js"></script>
+<script src="../03-solver/cavity-solver.js"></script>
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+
+// Each element: { role, type, param }
+// role: 'mirror1' | 'ica' | 'mirror2'
+// type: 'flatMirror' | 'curvedMirror' | 'freeSpace' | 'thinLens' | 'gainMedium'
+// param: {} | { R_mm } | { L_mm } | { f_mm } | { n, t_mm }
+
+let elements = [];
+
+function loadPreset(name) {
+  if (name === 'hemi') {
+    elements = [
+      { role: 'mirror1', type: 'flatMirror',    param: {} },
+      { role: 'ica',     type: 'freeSpace',     param: { L_mm: 100 } },
+      { role: 'mirror2', type: 'curvedMirror',  param: { R_mm: 200 } },
+    ];
+  } else if (name === 'symm') {
+    elements = [
+      { role: 'mirror1', type: 'curvedMirror', param: { R_mm: 200 } },
+      { role: 'ica',     type: 'freeSpace',    param: { L_mm: 100 } },
+      { role: 'mirror2', type: 'curvedMirror', param: { R_mm: 200 } },
+    ];
+  } else if (name === 'bowTie') {
+    elements = [
+      { role: 'mirror1', type: 'curvedMirror', param: { R_mm: 200 } },
+      { role: 'ica',     type: 'freeSpace',    param: { L_mm: 60 } },
+      { role: 'ica',     type: 'thinLens',     param: { f_mm: 50 } },
+      { role: 'ica',     type: 'freeSpace',    param: { L_mm: 60 } },
+      { role: 'mirror2', type: 'curvedMirror', param: { R_mm: 200 } },
+    ];
+  }
+  renderTable();
+  compute();
+}
+
+function addElement() {
+  const mirror2Idx = elements.findLastIndex(e => e.role === 'mirror2');
+  elements.splice(mirror2Idx, 0, { role: 'ica', type: 'freeSpace', param: { L_mm: 50 } });
+  renderTable();
+  compute();
+}
+
+function removeElement(idx) {
+  if (elements[idx].role !== 'ica') return;
+  elements.splice(idx, 1);
+  renderTable();
+  compute();
+}
+
+// ── Table rendering ──────────────────────────────────────────────────────────
+
+function typeOptions(current) {
+  const types = ['flatMirror','curvedMirror','freeSpace','thinLens','gainMedium'];
+  return types.map(t => `<option value="${t}"${t===current?' selected':''}>${t}</option>`).join('');
+}
+
+function paramHtml(el) {
+  const p = el.param;
+  if (el.type === 'curvedMirror') return `<input class="param-input" type="number" value="${p.R_mm??200}" data-key="R_mm" min="1"> mm (R)`;
+  if (el.type === 'freeSpace')    return `<input class="param-input" type="number" value="${p.L_mm??50}"  data-key="L_mm" min="0.1"> mm (L)`;
+  if (el.type === 'thinLens')     return `<input class="param-input" type="number" value="${p.f_mm??100}" data-key="f_mm" min="1"> mm (f)`;
+  if (el.type === 'gainMedium')   return `<input class="param-input" type="number" value="${p.n??1.76}" data-key="n" step="0.01" min="1"> n &nbsp;<input class="param-input" type="number" value="${p.t_mm??5}" data-key="t_mm" min="0.1"> mm`;
+  return '—';
+}
+
+function roleLabel(role) {
+  if (role === 'mirror1') return '<span style="color:#58a6ff">M1</span>';
+  if (role === 'mirror2') return '<span style="color:#58a6ff">M2</span>';
+  return '<span style="color:#6e7681">ICA</span>';
+}
+
+function renderTable() {
+  const tbody = document.getElementById('elem-tbody');
+  tbody.innerHTML = elements.map((el, i) => `
+    <tr>
+      <td>${roleLabel(el.role)}</td>
+      <td>${el.role === 'ica'
+        ? `<select onchange="onTypeChange(${i},this.value)">${typeOptions(el.type)}</select>`
+        : `<span class="elem-type">${el.type}</span>`}</td>
+      <td>${paramHtml(el)}</td>
+      <td>${el.role === 'ica' ? `<button class="btn-del" onclick="removeElement(${i})">✕</button>` : ''}</td>
+    </tr>`).join('');
+
+  // Attach param listeners
+  tbody.querySelectorAll('input.param-input').forEach((inp, _) => {
+    inp.addEventListener('change', () => {
+      const tr   = inp.closest('tr');
+      const idx  = [...tbody.rows].indexOf(tr);
+      const key  = inp.dataset.key;
+      elements[idx].param[key] = parseFloat(inp.value);
+      compute();
+    });
+  });
+}
+
+function onTypeChange(idx, newType) {
+  elements[idx].type = newType;
+  elements[idx].param = defaultParam(newType);
+  renderTable();
+  compute();
+}
+
+function defaultParam(type) {
+  if (type === 'curvedMirror') return { R_mm: 200 };
+  if (type === 'freeSpace')    return { L_mm: 50 };
+  if (type === 'thinLens')     return { f_mm: 100 };
+  if (type === 'gainMedium')   return { n: 1.76, t_mm: 5 };
+  return {};
+}
+
+// ── Element conversion ────────────────────────────────────────────────────────
+
+function toAbcdElement(el) {
+  const p = el.param;
+  if (el.type === 'flatMirror')   return makeElement('flatMirror');
+  if (el.type === 'curvedMirror') return makeElement('curvedMirror', { R_m: (p.R_mm??200)*1e-3 });
+  if (el.type === 'freeSpace')    return makeElement('freeSpace',    { L_m: (p.L_mm??50)*1e-3 });
+  if (el.type === 'thinLens')     return makeElement('thinLens',     { f_m: (p.f_mm??100)*1e-3 });
+  if (el.type === 'gainMedium')   return makeElement('gainMedium',   { n: p.n??1.76, t_m: (p.t_mm??5)*1e-3 });
+  return makeElement('flatMirror');
+}
+
+// ── Compute ──────────────────────────────────────────────────────────────────
+
+function compute() {
+  const lam_nm = parseFloat(document.getElementById('lambda-nm').value) || 1064;
+
+  const m1el  = elements.find(e => e.role === 'mirror1');
+  const m2el  = elements.find(e => e.role === 'mirror2');
+  const icaEl = elements.filter(e => e.role === 'ica');
+
+  if (!m1el || !m2el) return;
+
+  const m1  = toAbcdElement(m1el);
+  const m2  = toAbcdElement(m2el);
+  const ica = icaEl.map(toAbcdElement);
+
+  const res = CAVITY.solve({ mirror1: m1, intracavity: ica, mirror2: m2, lambda_nm: lam_nm });
+
+  updateBadge(res);
+  updateResults(res, m1el, m2el, icaEl, lam_nm);
+  updateProfilePlot(res, icaEl);
+  updateStabilityPlot(m1el, m2el, lam_nm, icaEl, res);
+  updateExport(res, lam_nm);
+}
+
+function updateBadge(res) {
+  const badge = document.getElementById('stability-badge');
+  const info  = document.getElementById('header-info');
+  if (!res.stable) {
+    badge.className = 'badge badge-unstable';
+    badge.textContent = 'Unstable';
+    info.textContent = `|Tr/2| = ${Math.abs(res.trace_half).toFixed(4)}`;
+  } else {
+    const th = res.trace_half;
+    if (Math.abs(Math.abs(th) - 1) < 1e-6) {
+      badge.className = 'badge badge-boundary';
+      badge.textContent = 'Boundary';
+    } else {
+      badge.className = 'badge badge-stable';
+      badge.textContent = 'Stable';
+    }
+    info.textContent = `Tr/2 = ${th.toFixed(4)}`;
+  }
+}
+
+function updateResults(res, m1el, m2el, icaEl, lam_nm) {
+  const fmt = (v, unit, digits=4) => v != null ? `${(v).toFixed(digits)} ${unit}` : '—';
+
+  // Total free-space length
+  const L_total = icaEl.filter(e => e.type === 'freeSpace').reduce((s,e) => s+(e.param.L_mm??0), 0);
+
+  document.getElementById('r-trace').textContent = res.trace_half.toFixed(6);
+  const g1 = isFinite(m1el.param.R_mm??Infinity) ? 1 - L_total/(m1el.param.R_mm??Infinity) : 1;
+  const g2 = isFinite(m2el.param.R_mm??Infinity) ? 1 - L_total/(m2el.param.R_mm??Infinity) : 1;
+  document.getElementById('r-g1g2').textContent = (g1*g2).toFixed(6);
+
+  if (res.eigenmode) {
+    const em = res.eigenmode;
+    document.getElementById('r-w1').textContent = fmt(em.w_m * 1e6, 'µm');
+    document.getElementById('r-zr').textContent = fmt(em.zR * 1e3, 'mm');
+  } else {
+    document.getElementById('r-w1').textContent = '—';
+    document.getElementById('r-zr').textContent = '—';
+  }
+
+  // w at mirror2: last profile point
+  if (res.profile) {
+    const w2 = res.profile.points.at(-1).w_m;
+    document.getElementById('r-w2').textContent = fmt(w2 * 1e6, 'µm');
+  } else {
+    document.getElementById('r-w2').textContent = '—';
+  }
+
+  document.getElementById('r-L').textContent = fmt(L_total, 'mm', 2);
+}
+
+function updateExport(res, lam_nm) {
+  const box = document.getElementById('export-box');
+  const btn = document.getElementById('btn-copy-url');
+
+  if (!res.eigenmode || !res.eigenmode.q) {
+    box.textContent = '// Cavity unstable — no eigenmode';
+    btn.disabled = true;
+    return;
+  }
+
+  const q       = res.eigenmode.q;
+  const lam_m   = lam_nm * 1e-9;
+  const zR_m    = q.im;                                       // Rayleigh range [m]
+  const w0_m    = Math.sqrt(zR_m * lam_m / Math.PI);         // beam waist [m]
+  const waistZ_m = -q.re;                                     // waist pos from M1 [m]
+  const wM1_um  = res.eigenmode.w_m * 1e6;
+
+  box.textContent =
+    `// OpticSim beam source (from CavitySim eigenmode at M1)\n` +
+    `lambda  = ${lam_nm} nm\n` +
+    `w₀      = ${(w0_m*1e6).toFixed(2)} µm   (beam waist)\n` +
+    `waistZ  = ${(waistZ_m*1e3).toFixed(2)} mm  (from M1; − = inside cavity)\n` +
+    `w @ M1  = ${wM1_um.toFixed(2)} µm`;
+
+  btn.disabled = false;
+  btn._url = (() => {
+    const base = '../OpticSim/04-integration/index.html';
+    return `${base}?lambda_nm=${lam_nm}&w0_mm=${(w0_m*1e3).toFixed(5)}&waistZ_cm=${(waistZ_m*100).toFixed(4)}`;
+  })();
+}
+
+document.getElementById('btn-copy-url').addEventListener('click', function () {
+  const url = this._url;
+  if (!url) return;
+  navigator.clipboard.writeText(url).then(() => {
+    const orig = this.textContent;
+    this.textContent = '✓ Copied! Paste in new tab';
+    setTimeout(() => { this.textContent = orig; }, 2000);
+  }).catch(() => {
+    // Fallback: show URL in prompt so user can copy manually
+    window.prompt('Copy this URL and open in new tab:', url);
+  });
+});
+
+// ── Profile SVG ──────────────────────────────────────────────────────────────
+
+function updateProfilePlot(res, icaEl) {
+  const svg = document.getElementById('svg-profile');
+  svg.innerHTML = '';
+  const W = svg.clientWidth  || 600;
+  const H = svg.clientHeight || 220;
+  const PAD = { t: 30, b: 30, l: 50, r: 20 };
+  const pw = W - PAD.l - PAD.r;
+  const ph = H - PAD.t - PAD.b;
+
+  if (!res.profile || !res.eigenmode) {
+    text(svg, W/2, H/2, 'Cavity unstable', '#f85149', 'middle');
+    return;
+  }
+
+  const pts = res.profile.points;
+  const zMax = pts.at(-1).z_m;
+  const wMax = Math.max(...pts.map(p => p.w_m)) * 1.15;
+
+  const sx = z  => PAD.l + (z / zMax) * pw;
+  const sy = w  => PAD.t + ph - (w / wMax) * ph;
+
+  // Grid lines
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.t + ph * i / 4;
+    line(svg, PAD.l, y, W - PAD.r, y, '#1a2a3a');
+    const wVal = wMax * (1 - i/4) * 1e6;
+    text(svg, PAD.l - 4, y + 4, wVal.toFixed(0), '#6e7681', 'end', 10);
+  }
+
+  // Axis labels
+  text(svg, PAD.l - 40, PAD.t + ph/2, 'w (µm)', '#6e7681', 'middle', 10, 'rotate(-90)');
+  text(svg, W/2, H - 4, 'z (mm)', '#6e7681', 'middle', 10);
+
+  // Upper beam (+w)
+  const pathUp = pts.map((p, i) => `${i===0?'M':'L'}${sx(p.z_m).toFixed(1)},${sy(p.w_m).toFixed(1)}`).join(' ');
+  // Lower beam (-w, mirror)
+  const pathDn = [...pts].reverse().map(p => `L${sx(p.z_m).toFixed(1)},${sy(-p.w_m).toFixed(1)}`).join(' ');
+  const pathFill = pathUp + ' ' + pathDn + ' Z';
+
+  const fillEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  fillEl.setAttribute('d', pathFill.replace('L'+sx(pts.at(-1).z_m).toFixed(1), 'L'+sx(pts.at(-1).z_m).toFixed(1)));
+  fillEl.setAttribute('fill', '#1a3a5a'); fillEl.setAttribute('opacity', '0.5');
+  svg.appendChild(fillEl);
+
+  const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  pathEl.setAttribute('d', pathUp);
+  pathEl.setAttribute('fill', 'none'); pathEl.setAttribute('stroke', '#7ec8e3'); pathEl.setAttribute('stroke-width', '1.5');
+  svg.appendChild(pathEl);
+
+  // Zero axis
+  line(svg, PAD.l, sy(0), W - PAD.r, sy(0), '#30363d');
+
+  // Mirror markers
+  line(svg, sx(0), PAD.t, sx(0), PAD.t + ph, '#58a6ff', 2, '4,2');
+  line(svg, sx(zMax), PAD.t, sx(zMax), PAD.t + ph, '#58a6ff', 2, '4,2');
+  text(svg, sx(0) + 4, PAD.t + 12, 'M1', '#58a6ff', 'start', 10);
+  text(svg, sx(zMax) - 4, PAD.t + 12, 'M2', '#58a6ff', 'end', 10);
+
+  // Waist marker
+  const waistPt = pts.reduce((b, p) => p.w_m < b.w_m ? p : b, pts[0]);
+  const wx = sx(waistPt.z_m);
+  const wy = sy(waistPt.w_m);
+  circle(svg, wx, wy, 3, '#f0883e');
+  text(svg, wx + 5, wy - 5, `w₀=${(waistPt.w_m*1e6).toFixed(1)}µm`, '#f0883e', 'start', 10);
+
+  // z axis tick labels (mm)
+  for (let i = 0; i <= 4; i++) {
+    const z = zMax * i / 4;
+    const x = sx(z);
+    text(svg, x, H - PAD.b + 14, (z*1e3).toFixed(0), '#6e7681', 'middle', 10);
+  }
+}
+
+// ── Stability diagram SVG ─────────────────────────────────────────────────────
+
+function updateStabilityPlot(m1el, m2el, lam_nm, icaEl, res) {
+  const svg = document.getElementById('svg-stability');
+  svg.innerHTML = '';
+  const W = svg.clientWidth  || 600;
+  const H = svg.clientHeight || 220;
+  const PAD = { t: 30, b: 30, l: 50, r: 20 };
+  const pw = W - PAD.l - PAD.r;
+  const ph = H - PAD.t - PAD.b;
+
+  // Only meaningful for simple two-mirror cavities with at least one free-space
+  const freeEl = icaEl.find(e => e.type === 'freeSpace');
+  if (!freeEl) {
+    text(svg, W/2, H/2, 'Add a free-space element to see stability scan', '#6e7681', 'middle');
+    return;
+  }
+
+  const R1_mm = isFinite(m1el.param.R_mm??Infinity) ? (m1el.param.R_mm??Infinity) : null;
+  const R2_mm = isFinite(m2el.param.R_mm??Infinity) ? (m2el.param.R_mm??Infinity) : null;
+  const R1_m  = R1_mm ? R1_mm * 1e-3 : Infinity;
+  const R2_m  = R2_mm ? R2_mm * 1e-3 : Infinity;
+
+  // Determine scan range: 0 to max(2R1, 2R2, 500mm)
+  const Rmin_m  = Math.min(isFinite(R1_m)?R1_m:10, isFinite(R2_m)?R2_m:10);
+  const L_max_m = Math.min(2 * (isFinite(R1_m)?R1_m:1) + 0.05, 0.8);
+  const scan = scanStability(R1_m, R2_m, [0.001, L_max_m], 200, lam_nm * 1e-9);
+
+  // g1g2 product vs L_mm plot
+  const L_max_mm = L_max_m * 1e3;
+  const sx = L => PAD.l + (L / L_max_mm) * pw;
+  const sy = g => PAD.t + ph - ((g + 0.2) / 1.4) * ph;  // range [-0.2, 1.2]
+
+  // Grid
+  for (const gv of [-0.2, 0, 0.5, 1, 1.2]) {
+    const y = sy(gv);
+    line(svg, PAD.l, y, W - PAD.r, y, gv === 0 || gv === 1 ? '#30363d' : '#1a2a3a', gv === 0 || gv === 1 ? 1 : 0.5);
+    if (gv >= -0.1 && gv <= 1.1)
+      text(svg, PAD.l - 4, y + 4, gv.toFixed(1), '#6e7681', 'end', 10);
+  }
+
+  // Stable region shading [0,1]
+  const shadeY0 = sy(1), shadeY1 = sy(0);
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', PAD.l); rect.setAttribute('y', shadeY0);
+  rect.setAttribute('width', pw); rect.setAttribute('height', shadeY1 - shadeY0);
+  rect.setAttribute('fill', '#0d3d1f'); rect.setAttribute('opacity', '0.4');
+  svg.appendChild(rect);
+
+  // Plot g1g2 curve
+  const pathPts = scan.map((r, i) => `${i===0?'M':'L'}${sx(r.L_m*1e3).toFixed(1)},${sy(r.product).toFixed(1)}`).join(' ');
+  const curve = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  curve.setAttribute('d', pathPts);
+  curve.setAttribute('fill', 'none'); curve.setAttribute('stroke', '#4a7a9a'); curve.setAttribute('stroke-width', '1.5');
+  svg.appendChild(curve);
+
+  // Current operating point
+  const L_total_mm = icaEl.filter(e => e.type === 'freeSpace').reduce((s,e) => s+(e.param.L_mm??0), 0);
+  const curPt = g1g2Point(R1_m, R2_m, L_total_mm * 1e-3);
+  const cx = sx(L_total_mm);
+  const cy = sy(curPt.product);
+  if (cx >= PAD.l && cx <= W - PAD.r) {
+    line(svg, cx, PAD.t, cx, PAD.t + ph, '#f0883e', 1, '4,2');
+    circle(svg, cx, cy, 5, res.stable ? '#3fb950' : '#f85149');
+    text(svg, cx + 6, cy - 6, `g₁g₂=${curPt.product.toFixed(3)}`, res.stable ? '#3fb950' : '#f85149', 'start', 10);
+  }
+
+  // Labels
+  text(svg, PAD.l - 40, PAD.t + ph/2, 'g₁g₂', '#6e7681', 'middle', 10, 'rotate(-90)');
+  text(svg, W/2, H - 4, 'L (mm)', '#6e7681', 'middle', 10);
+  text(svg, W - PAD.r - 2, sy(0.5) - 4, 'stable', '#3fb950', 'end', 9);
+  for (let i = 0; i <= 4; i++) {
+    const L = L_max_mm * i / 4;
+    text(svg, sx(L), H - PAD.b + 14, L.toFixed(0), '#6e7681', 'middle', 10);
+  }
+}
+
+// ── SVG helpers ───────────────────────────────────────────────────────────────
+
+function line(svg, x1, y1, x2, y2, stroke = '#30363d', sw = 1, dasharray = '') {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  el.setAttribute('x1', x1); el.setAttribute('y1', y1);
+  el.setAttribute('x2', x2); el.setAttribute('y2', y2);
+  el.setAttribute('stroke', stroke); el.setAttribute('stroke-width', sw);
+  if (dasharray) el.setAttribute('stroke-dasharray', dasharray);
+  svg.appendChild(el);
+}
+
+function circle(svg, cx, cy, r, fill) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  el.setAttribute('cx', cx); el.setAttribute('cy', cy); el.setAttribute('r', r);
+  el.setAttribute('fill', fill);
+  svg.appendChild(el);
+}
+
+function text(svg, x, y, str, fill, anchor = 'start', size = 11, transform = '') {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  el.setAttribute('x', x); el.setAttribute('y', y);
+  el.setAttribute('fill', fill); el.setAttribute('font-size', size);
+  el.setAttribute('font-family', 'monospace');
+  el.setAttribute('text-anchor', anchor);
+  if (transform) el.setAttribute('transform', `translate(${x},${y}) ${transform} translate(${-x},${-y})`);
+  el.textContent = str;
+  svg.appendChild(el);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('lambda-nm').addEventListener('change', compute);
+
+loadPreset('hemi');
+</script>
+</body>
+</html>

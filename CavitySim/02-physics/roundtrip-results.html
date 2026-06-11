@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CavitySim Phase 2 — Round-trip Matrix & Stability</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; font-weight: bold; }
+  .val  { color: #d29922; }
+  .sep  { color: #555; font-style: italic; font-size: 11px; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 12px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>CavitySim Phase 2 — Round-trip Matrix &amp; Stability</h1>
+<p>Verifies: <code>roundtrip.js</code> — round-trip ABCD matrix for standard cavities,
+   stability condition, and g-parameters. All cavities use λ=1064 nm.</p>
+
+<h2>1. Hemispherical Cavity  (flat + curved R=200mm, L=100mm)</h2>
+<p>Expected: stable, Tr/2=0, M_rt=[[0,0.1],[−10,0]] (derived analytically)</p>
+<table id="t1">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>2. Symmetric Confocal  (R₁=R₂=100mm, L=100mm)</h2>
+<p>Expected: M_rt=−I, Tr/2=−1, on stability boundary (degenerate)</p>
+<table id="t2">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>3. Planar Cavity  (flat + flat, L=100mm)</h2>
+<p>Expected: M_rt=[[1,0.2],[0,1]], Tr/2=1, on stability boundary</p>
+<table id="t3">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>4. Unstable Cavity  (R₁=R₂=100mm, L=250mm)</h2>
+<p>Expected: isStable=false, |Tr/2|>1, g₁g₂>1</p>
+<table id="t4">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>5. g-Parameters & Physical Invariants</h2>
+<table id="t5">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="../01-elements/elements.js"></script>
+<script src="roundtrip.js"></script>
+<script>
+let passed = 0, failed = 0, n = 0;
+
+function addRow(tid, label, expected, actual, ok) {
+  n++;
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td>${n}</td>` +
+    `<td>${label}</td>` +
+    `<td class="val">${expected}</td>` +
+    `<td class="val">${actual}</td>` +
+    `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function near(a, b, tol = 1e-9) { return Math.abs(a - b) <= tol; }
+function fmt(v) { return typeof v === 'number' ? v.toPrecision(6) : String(v); }
+function fmtM(M) {
+  return `[[${M[0][0].toFixed(4)}, ${M[0][1].toFixed(4)}], [${M[1][0].toFixed(4)}, ${M[1][1].toFixed(4)}]]`;
+}
+
+// ── Cavity 1: Hemispherical ───────────────────────────────────────────────────
+// flat mirror + freeSpace(L=0.1m) + curvedMirror(R=0.2m)
+// Analytical M_rt = [[0, 0.1], [-10, 0]]
+{
+  const m1  = makeElement('flatMirror');
+  const m2  = makeElement('curvedMirror', { R_m: 0.2 });
+  const ica = [makeElement('freeSpace', { L_m: 0.1 })];
+  const Mrt = roundTripMatrix(m1, ica, m2);
+  const th  = traceHalf(Mrt);
+
+  addRow('t1', 'M_rt[0][0] ≈ 0',  '0',    fmt(Mrt[0][0]), near(Mrt[0][0], 0));
+  addRow('t1', 'M_rt[0][1] ≈ 0.1','0.1',  fmt(Mrt[0][1]), near(Mrt[0][1], 0.1));
+  addRow('t1', 'M_rt[1][0] ≈ −10','−10',  fmt(Mrt[1][0]), near(Mrt[1][0], -10));
+  addRow('t1', 'M_rt[1][1] ≈ 0',  '0',    fmt(Mrt[1][1]), near(Mrt[1][1], 0));
+  addRow('t1', 'traceHalf = 0',    '0',    fmt(th),         near(th, 0));
+  addRow('t1', 'isStable = true',  'true', String(isStable(Mrt)), isStable(Mrt));
+  addRow('t1', 'det(M_rt) = 1',    '1',    fmt(matDet(Mrt)),near(matDet(Mrt), 1));
+}
+
+// ── Cavity 2: Symmetric Confocal ─────────────────────────────────────────────
+// curvedMirror(R=0.1m) + freeSpace(L=0.1m) + curvedMirror(R=0.1m)
+// Analytical M_rt = −I = [[-1,0],[0,-1]]
+{
+  const m1  = makeElement('curvedMirror', { R_m: 0.1 });
+  const m2  = makeElement('curvedMirror', { R_m: 0.1 });
+  const ica = [makeElement('freeSpace', { L_m: 0.1 })];
+  const Mrt = roundTripMatrix(m1, ica, m2);
+  const th  = traceHalf(Mrt);
+
+  addRow('t2', 'M_rt = −I: M[0][0]', '−1', fmt(Mrt[0][0]), near(Mrt[0][0], -1));
+  addRow('t2', 'M_rt = −I: M[0][1]', '0',  fmt(Mrt[0][1]), near(Mrt[0][1], 0));
+  addRow('t2', 'M_rt = −I: M[1][0]', '0',  fmt(Mrt[1][0]), near(Mrt[1][0], 0));
+  addRow('t2', 'M_rt = −I: M[1][1]', '−1', fmt(Mrt[1][1]), near(Mrt[1][1], -1));
+  addRow('t2', 'traceHalf = −1 (boundary)', '−1', fmt(th), near(th, -1));
+  addRow('t2', 'isStable = true (boundary)', 'true', String(isStable(Mrt)), isStable(Mrt));
+}
+
+// ── Cavity 3: Planar ─────────────────────────────────────────────────────────
+// flatMirror + freeSpace(L=0.1m) + flatMirror
+// Analytical M_rt = [[1, 0.2], [0, 1]]
+{
+  const m1  = makeElement('flatMirror');
+  const m2  = makeElement('flatMirror');
+  const ica = [makeElement('freeSpace', { L_m: 0.1 })];
+  const Mrt = roundTripMatrix(m1, ica, m2);
+  const th  = traceHalf(Mrt);
+
+  addRow('t3', 'M_rt[0][0] = 1',   '1',   fmt(Mrt[0][0]), near(Mrt[0][0], 1));
+  addRow('t3', 'M_rt[0][1] = 2L',  '0.2', fmt(Mrt[0][1]), near(Mrt[0][1], 0.2));
+  addRow('t3', 'M_rt[1][0] = 0',   '0',   fmt(Mrt[1][0]), near(Mrt[1][0], 0));
+  addRow('t3', 'M_rt[1][1] = 1',   '1',   fmt(Mrt[1][1]), near(Mrt[1][1], 1));
+  addRow('t3', 'traceHalf = 1 (boundary)', '1', fmt(th), near(th, 1));
+  addRow('t3', 'isStable = true (boundary)', 'true', String(isStable(Mrt)), isStable(Mrt));
+}
+
+// ── Cavity 4: Unstable ────────────────────────────────────────────────────────
+// curvedMirror(R=0.1m) + freeSpace(L=0.25m) + curvedMirror(R=0.1m)
+// g = 1 − 0.25/0.1 = −1.5, g²=2.25 > 1 → unstable
+{
+  const m1  = makeElement('curvedMirror', { R_m: 0.1 });
+  const m2  = makeElement('curvedMirror', { R_m: 0.1 });
+  const ica = [makeElement('freeSpace', { L_m: 0.25 })];
+  const Mrt = roundTripMatrix(m1, ica, m2);
+  const th  = traceHalf(Mrt);
+
+  addRow('t4', 'isStable = false',       'false', String(isStable(Mrt)), !isStable(Mrt));
+  addRow('t4', '|traceHalf| > 1',        '> 1',   fmt(Math.abs(th)),     Math.abs(th) > 1);
+  addRow('t4', 'g₁g₂ = 2.25 > 1',       '2.25',  fmt(gParams(0.1,0.1,0.25).product),
+    near(gParams(0.1,0.1,0.25).product, 2.25));
+}
+
+// ── Section 5: g-Parameters & Invariants ──────────────────────────────────────
+{
+  // Hemispherical: R1=∞, R2=200mm, L=100mm → g1=1, g2=0.5
+  const gH = gParams(Infinity, 0.2, 0.1);
+  addRow('t5', 'Hemispherical g1 = 1',    '1',   fmt(gH.g1),      near(gH.g1, 1));
+  addRow('t5', 'Hemispherical g2 = 0.5',  '0.5', fmt(gH.g2),      near(gH.g2, 0.5));
+  addRow('t5', 'Hemispherical g1g2 = 0.5','0.5', fmt(gH.product), near(gH.product, 0.5));
+
+  // Symmetric concentric: R1=R2=100mm, L=200mm → g=−1, g1g2=1 (boundary)
+  const gC = gParams(0.1, 0.1, 0.2);
+  addRow('t5', 'Concentric g1 = −1',      '−1', fmt(gC.g1),      near(gC.g1, -1));
+  addRow('t5', 'Concentric g1g2 = 1',     '1',  fmt(gC.product), near(gC.product, 1));
+
+  // Planar: R1=R2=∞ → g1=g2=1
+  const gP = gParams(Infinity, Infinity, 0.1);
+  addRow('t5', 'Planar g1=g2=1, product=1','1', fmt(gP.product), near(gP.product, 1));
+
+  // det(M_rt) = 1 for the unstable cavity too
+  const m1u = makeElement('curvedMirror', { R_m: 0.1 });
+  const m2u = makeElement('curvedMirror', { R_m: 0.1 });
+  const Mrt_u = roundTripMatrix(m1u, [makeElement('freeSpace',{L_m:0.25})], m2u);
+  addRow('t5', 'det(M_rt) = 1 for unstable cavity', '1', fmt(matDet(Mrt_u)), near(matDet(Mrt_u), 1));
+
+  // Symmetric cavity: traceHalf = 2g²−1  (analytical identity)
+  // R=200mm, L=100mm → g=0.5 → 2g²−1 = −0.5
+  const m1s  = makeElement('curvedMirror', { R_m: 0.2 });
+  const m2s  = makeElement('curvedMirror', { R_m: 0.2 });
+  const Mrt_s = roundTripMatrix(m1s, [makeElement('freeSpace',{L_m:0.1})], m2s);
+  const g_s   = 1 - 0.1 / 0.2;  // 0.5
+  const th_s  = traceHalf(Mrt_s);
+  addRow('t5', 'Symmetric cavity traceHalf = 2g²−1 (g=0.5 → −0.5)', fmt(2*g_s**2-1),
+    fmt(th_s), near(th_s, 2*g_s**2-1));
+}
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+const total = passed + failed;
+const sumEl = document.getElementById('summary');
+sumEl.textContent = `${passed}/${total} PASS${failed === 0 ? ' ✓ Phase 2 COMPLETE' : ` — ${failed} FAILED`}`;
+sumEl.style.color = failed === 0 ? '#3fb950' : '#f85149';
+</script>
+</body>
+</html>

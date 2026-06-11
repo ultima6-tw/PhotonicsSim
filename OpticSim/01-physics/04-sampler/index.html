@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>04-sampler test</title>
+<style>
+  body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 2rem; }
+  h2 { color: #7ec8e3; margin-top: 2rem; }
+  .pass { color: #7ed87e; }
+  .fail { color: #e37e7e; }
+  table { border-collapse: collapse; margin: 0.5rem 0; }
+  td, th { padding: 4px 12px; border: 1px solid #444; text-align: right; }
+  th { color: #7ec8e3; }
+  canvas { display: block; margin: 0.5rem 0; border: 1px solid #333; }
+  pre { background: #222; padding: 0.8rem; border-radius: 4px; color: #aaa; font-size: 0.85em; }
+  .label { color: #aaa; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<h1>04-sampler — Unified Beam Data Test</h1>
+<div id="out"></div>
+
+<script src="../01-matrices/matrices.js"></script>
+<script src="../02-gaussian/gaussian.js"></script>
+<script src="../03-raytrace/raytrace.js"></script>
+<script src="sampler.js"></script>
+<script>
+const out = document.getElementById('out');
+const results = [];
+
+function assert(label, got, expected, tol = 1e-9) {
+  const pass = typeof expected === 'boolean' ? got === expected : Math.abs(got - expected) < tol;
+  results.push({ label, got, expected, pass });
+}
+function assertRel(label, got, expected, relTol = 1e-3) {
+  const pass = Math.abs(got - expected) / (Math.abs(expected) || 1) < relTol;
+  results.push({ label, got, expected, pass });
+}
+function section(title) { out.innerHTML += `<h2>${title}</h2>`; }
+function render() {
+  let html = '<table><tr><th>Test</th><th>Expected</th><th>Got</th><th>Result</th></tr>';
+  for (const r of results) {
+    const cls = r.pass ? 'pass' : 'fail';
+    const fmt = v => typeof v === 'boolean' ? String(v) : (typeof v === 'number' ? v.toExponential(4) : v);
+    html += `<tr><td style="text-align:left">${r.label}</td><td>${fmt(r.expected)}</td><td>${fmt(r.got)}</td><td class="${cls}">${r.pass ? '✓' : '✗'}</td></tr>`;
+  }
+  const total = results.length, passed = results.filter(r => r.pass).length;
+  html += `</table><p class="${passed===total?'pass':'fail'}">${passed}/${total} passed</p>`;
+  out.innerHTML += html;
+  results.length = 0;
+}
+
+const SYSTEM = {
+  beam: { lambda: 1064e-9, w0: 1e-3, waistZ: 0 },
+  elements: [
+    { type: 'free', d: 0.5 },
+    { type: 'lens', f: 0.3 },
+    { type: 'free', d: 0.8 },
+  ],
+};
+
+// ── 1. Output structure ───────────────────────────────────────────────────────
+section('1. Output Structure');
+{
+  const bd = buildBeamData(SYSTEM);
+
+  assert('has gaussian key',  typeof bd.gaussian === 'object', true);
+  assert('has rays key',      typeof bd.rays     === 'object', true);
+  assert('has optics key',    Array.isArray(bd.optics),        true);
+  assert('has meta key',      typeof bd.meta     === 'object', true);
+
+  assert('gaussian.samples is array',  Array.isArray(bd.gaussian.samples), true);
+  assert('rays.paths is array',        Array.isArray(bd.rays.paths),       true);
+  assert('gaussian.waists is array',   Array.isArray(bd.gaussian.waists),  true);
+
+  assert('meta.lambda correct', bd.meta.lambda, 1064e-9);
+  assert('meta.w0 correct',     bd.meta.w0,     1e-3);
+  assertRel('meta.totalLength = 1.3m', bd.meta.totalLength, 1.3, 1e-9);
+}
+render();
+
+// ── 2. Default rays ───────────────────────────────────────────────────────────
+section('2. Default Ray Config (parallel, 7 rays, halfWidth = w0)');
+{
+  const bd = buildBeamData(SYSTEM);
+
+  assert('7 ray paths by default', bd.rays.paths.length, 7);
+  // First ray should start at r = -w0
+  assert('first ray r = -w0', bd.rays.paths[0][0].r, -1e-3);
+  assert('last ray r = +w0',  bd.rays.paths[6][0].r,  1e-3);
+}
+render();
+
+// ── 3. Custom rays — point source ─────────────────────────────────────────────
+section('3. Custom Rays — Point Source');
+{
+  const bd = buildBeamData({
+    ...SYSTEM,
+    rays: { kind: 'pointSource', r0: 5e-4, maxAngle: 0.005, count: 5 },
+  });
+
+  assert('5 ray paths', bd.rays.paths.length, 5);
+  assert('all start at r = 5e-4', bd.rays.paths.every(p => Math.abs(p[0].r - 5e-4) < 1e-15), true);
+  assert('first theta = -maxAngle', Math.abs(bd.rays.paths[0][0].theta - (-0.005)) < 1e-12, true);
+}
+render();
+
+// ── 4. Optics list consistency ────────────────────────────────────────────────
+section('4. Optics List — Gaussian & Rays Agree');
+{
+  const bd = buildBeamData(SYSTEM);
+
+  assert('1 optic (lens)', bd.optics.length, 1);
+  assertRel('optic z = 0.5m', bd.optics[0].z, 0.5, 1e-9);
+  assert('optic type = lens', bd.optics[0].type === 'lens', true);
+
+  // gaussian and ray optics lists must be identical
+  const go = bd.gaussian.optics, ro = bd.rays.optics;
+  assert('gaussian & ray optics same count', go.length, ro.length);
+  assert('gaussian & ray optic z match', Math.abs(go[0].z - ro[0].z) < 1e-12, true);
+}
+render();
+
+// ── 5. Gaussian samples cover full z range ────────────────────────────────────
+section('5. Sample Coverage');
+{
+  const bd = buildBeamData(SYSTEM);
+  const zs = bd.gaussian.samples.map(s => s.z);
+
+  assert('first sample at z=0', zs[0], 0);
+  assertRel('last sample at totalLength', zs[zs.length - 1], 1.3, 1e-9);
+  assert('> 100 gaussian samples', zs.length > 100, true);
+
+  // Ray paths same length
+  const pathLen0 = bd.rays.paths[0].length;
+  assert('all ray paths same length', bd.rays.paths.every(p => p.length === pathLen0), true);
+}
+render();
+
+// ── 6. Waist detection passes through ─────────────────────────────────────────
+section('6. Waist Pass-Through from Gaussian');
+{
+  const bd = buildBeamData(SYSTEM);
+  assert('1 waist found',          bd.gaussian.waists.length, 1);
+  assertRel('waist near z=0.8m',   bd.gaussian.waists[0].z, 0.8, 0.02);
+}
+render();
+
+// ── 7. Default sampling density ───────────────────────────────────────────────
+section('7. Custom Sampling Density');
+{
+  const bdDefault = buildBeamData(SYSTEM);
+  const bdDense   = buildBeamData({ ...SYSTEM, sampling: { perSegment: 200 } });
+
+  assert('dense has more samples', bdDense.gaussian.samples.length > bdDefault.gaussian.samples.length, true);
+}
+render();
+
+// ── 8. beamSummary string ──────────────────────────────────────────────────────
+section('8. beamSummary');
+{
+  const bd = buildBeamData(SYSTEM);
+  const s  = beamSummary(bd);
+
+  assert('summary contains lambda', s.includes('1064'), true);
+  assert('summary contains w0',     s.includes('1.00'), true);
+  assert('summary contains waist',  s.includes('waist'), true);
+}
+render();
+
+// ── 9. Combined preview canvas ────────────────────────────────────────────────
+{
+  const bd = buildBeamData({
+    beam: { lambda: 1064e-9, w0: 1e-3, waistZ: 0 },
+    elements: [
+      { type: 'free', d: 0.5 },
+      { type: 'lens', f: 0.3 },
+      { type: 'free', d: 0.8 },
+    ],
+    rays: { kind: 'parallel', count: 9, halfWidth: 1e-3 },
+    sampling: { perSegment: 120 },
+  });
+
+  const cw = 700, ch = 220, padX = 50, padY = 25;
+  const axisY = ch / 2;
+  const { gaussian, rays, optics, meta } = bd;
+
+  const allW   = gaussian.samples.map(s => s.w);
+  const allRay = rays.paths.flatMap(p => p.map(s => Math.abs(s.r)));
+  const zMax   = meta.totalLength;
+  const rMax   = Math.max(Math.max(...allW), Math.max(...allRay)) * 1.15;
+  const scale  = (axisY - padY) / rMax;
+
+  function px(z) { return padX + (z / zMax) * (cw - 2 * padX); }
+  function pu(r) { return axisY - r * scale; }
+  function pl(r) { return axisY + r * scale; }
+
+  const colours = ['#3a6','#4a7','#5a8','#6a9','#7aa','#8ab','#9bc','#abc','#bcd'];
+
+  out.insertAdjacentHTML('beforeend',
+    `<h2>9. Combined Preview — Gaussian envelope + ray paths</h2>` +
+    `<p class="label">${beamSummary(bd).split('\n').slice(0,4).join(' | ')}</p>` +
+    `<canvas id="cv" width="${cw}" height="${ch}" style="background:#0d1117"></canvas>`
+  );
+  const cv  = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  // Gaussian envelope fill
+  ctx.fillStyle = 'rgba(126,200,227,0.08)';
+  ctx.beginPath();
+  gaussian.samples.forEach((s, i) =>
+    i === 0 ? ctx.moveTo(px(s.z), pu(s.w)) : ctx.lineTo(px(s.z), pu(s.w)));
+  for (let i = gaussian.samples.length - 1; i >= 0; i--)
+    ctx.lineTo(px(gaussian.samples[i].z), pl(gaussian.samples[i].w));
+  ctx.closePath(); ctx.fill();
+
+  // Gaussian envelope strokes
+  ctx.strokeStyle = 'rgba(126,200,227,0.5)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  gaussian.samples.forEach((s, i) =>
+    i === 0 ? ctx.moveTo(px(s.z), pu(s.w)) : ctx.lineTo(px(s.z), pu(s.w)));
+  ctx.stroke();
+  ctx.beginPath();
+  gaussian.samples.forEach((s, i) =>
+    i === 0 ? ctx.moveTo(px(s.z), pl(s.w)) : ctx.lineTo(px(s.z), pl(s.w)));
+  ctx.stroke();
+
+  // Ray paths
+  rays.paths.forEach((path, i) => {
+    ctx.strokeStyle = colours[i % colours.length];
+    ctx.lineWidth = 0.9; ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    path.forEach((pt, j) =>
+      j === 0 ? ctx.moveTo(px(pt.z), pu(pt.r)) : ctx.lineTo(px(pt.z), pu(pt.r)));
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // Optical axis
+  ctx.strokeStyle = '#2a3a4a'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(padX, axisY); ctx.lineTo(cw - padX, axisY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Optics
+  ctx.font = '11px monospace';
+  optics.forEach(el => {
+    ctx.strokeStyle = '#c8a84b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px(el.z), padY); ctx.lineTo(px(el.z), ch - padY); ctx.stroke();
+    ctx.fillStyle = '#c8a84b';
+    ctx.fillText(`${el.type} f=${el.params.f}m`, px(el.z) + 4, padY + 10);
+  });
+
+  // Waist markers
+  gaussian.waists.forEach(w => {
+    ctx.fillStyle = '#7ed87e';
+    ctx.beginPath(); ctx.arc(px(w.z), pu(w.w), 3, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillText(`w=${(w.w * 1e6).toFixed(0)}μm`, px(w.z) + 5, pu(w.w) - 3);
+  });
+
+  // z labels
+  ctx.fillStyle = '#4a5a6a'; ctx.font = '10px monospace';
+  [0, 0.3, 0.6, 0.9, 1.2].forEach(z => {
+    if (z <= zMax) ctx.fillText(`${(z * 100).toFixed(0)}cm`, px(z) - 10, ch - 4);
+  });
+  ctx.fillStyle = '#4a5a6a';
+  ctx.fillText(`+${(rMax * 1e3).toFixed(2)}mm`, 2, pu(rMax) + 4);
+  ctx.fillText(`−${(rMax * 1e3).toFixed(2)}mm`, 2, pl(rMax) + 4);
+}
+</script>
+</body>
+</html>

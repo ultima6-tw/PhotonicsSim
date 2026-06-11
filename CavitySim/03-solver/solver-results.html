@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CavitySim Phase 5 — CAVITY Solver API</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; font-size: 13px; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; font-weight: bold; }
+  .val  { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 12px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>CavitySim Phase 5 — CAVITY Solver API</h1>
+<p>Verifies: <code>cavity-solver.js</code> — CAVITY.solve, CAVITY.scanLength, CAVITY.findMinWaistLength.</p>
+
+<h2>CAVITY.solve — Hemispherical cavity</h2>
+<table id="t1">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>CAVITY.solve — Symmetric & Unstable cavities</h2>
+<table id="t2">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>CAVITY.scanLength — unit conversion & structure</h2>
+<table id="t3">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<h2>CAVITY.findMinWaistLength</h2>
+<table id="t4">
+<tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="../01-elements/elements.js"></script>
+<script src="../02-physics/roundtrip.js"></script>
+<script src="../02-physics/eigenmode.js"></script>
+<script src="../02-physics/stability.js"></script>
+<script src="cavity-solver.js"></script>
+<script>
+let passed = 0, failed = 0, n = 0;
+
+function addRow(tid, label, expected, actual, ok) {
+  n++;
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td>${n}</td><td>${label}</td>` +
+    `<td class="val">${expected}</td>` +
+    `<td class="val">${actual}</td>` +
+    `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function near(a, b, tol) {
+  if (tol === undefined) tol = Math.abs(b) * 1e-6 + 1e-20;
+  return Math.abs(a - b) <= tol;
+}
+function f5(v) { return typeof v === 'number' ? v.toPrecision(5) : String(v); }
+
+// ════════════════════════════════════════════════════════════════════════════
+// CAVITY.solve — Hemispherical cavity
+// R1=∞ (flat), R2=200mm, L=100mm, λ=1064nm
+// Expected: stable, trace_half=0, eigenmode.q=0.1i, profile has points
+// ════════════════════════════════════════════════════════════════════════════
+{
+  const m1  = makeElement('flatMirror');
+  const m2  = makeElement('curvedMirror', { R_m: 0.2 });
+  const ica = [makeElement('freeSpace', { L_m: 0.1 })];
+  const res = CAVITY.solve({ mirror1: m1, intracavity: ica, mirror2: m2, lambda_nm: 1064 });
+
+  addRow('t1', 'stable = true',                 'true',  String(res.stable),          res.stable);
+  addRow('t1', 'trace_half = 0',                '0',     f5(res.trace_half),          near(res.trace_half, 0, 1e-9));
+  addRow('t1', 'M_rt is 2×2',                   '2×2',   String(res.M_rt.length),     res.M_rt.length === 2 && res.M_rt[0].length === 2);
+  addRow('t1', 'eigenmode not null',            'not null', String(res.eigenmode !== null), res.eigenmode !== null);
+  addRow('t1', 'eigenmode.q.im ≈ 0.1 m',       '0.1',   f5(res.eigenmode.q.im),      near(res.eigenmode.q.im, 0.1, 1e-10));
+  addRow('t1', 'eigenmode.zR ≈ 0.1 m',         '0.1',   f5(res.eigenmode.zR),        near(res.eigenmode.zR, 0.1, 1e-10));
+  addRow('t1', 'eigenmode.w_m > 0',             '> 0',   f5(res.eigenmode.w_m),       res.eigenmode.w_m > 0);
+  addRow('t1', 'profile not null',              'not null', String(res.profile !== null), res.profile !== null);
+  addRow('t1', 'profile.points ≥ 3',           '≥ 3',   String(res.profile.points.length), res.profile.points.length >= 3);
+  addRow('t1', 'profile first z = 0',          '0',     f5(res.profile.points[0].z_m), near(res.profile.points[0].z_m, 0, 1e-15));
+  addRow('t1', 'profile last z = L = 0.1m',    '0.1',   f5(res.profile.points.at(-1).z_m), near(res.profile.points.at(-1).z_m, 0.1, 1e-12));
+
+  // Cross-check: profile.points[0].w_m matches eigenmode.w_m
+  addRow('t1', 'profile w@z=0 matches eigenmode.w_m', f5(res.eigenmode.w_m),
+    f5(res.profile.points[0].w_m), near(res.profile.points[0].w_m, res.eigenmode.w_m, res.eigenmode.w_m * 1e-9));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CAVITY.solve — Symmetric & Unstable
+// ════════════════════════════════════════════════════════════════════════════
+{
+  // Symmetric cavity: R1=R2=200mm, L=100mm
+  const mS1  = makeElement('curvedMirror', { R_m: 0.2 });
+  const mS2  = makeElement('curvedMirror', { R_m: 0.2 });
+  const icaS = [makeElement('freeSpace', { L_m: 0.1 })];
+  const resS = CAVITY.solve({ mirror1: mS1, intracavity: icaS, mirror2: mS2, lambda_nm: 1064 });
+
+  addRow('t2', 'Symmetric: stable = true',          'true',  String(resS.stable), resS.stable);
+  addRow('t2', 'Symmetric: eigenmode not null',     'not null', String(resS.eigenmode !== null), resS.eigenmode !== null);
+
+  // w at mirror1 = first profile point = eigenmode.w_m
+  const w1_sym = resS.profile.points[0].w_m;
+  const w2_sym = resS.profile.points.at(-1).w_m;
+  addRow('t2', 'Symmetric: w at mirror1 = w at mirror2', f5(w1_sym), f5(w2_sym), near(w1_sym, w2_sym, w1_sym * 1e-9));
+
+  // Unstable cavity: R1=R2=100mm, L=250mm
+  const mU1  = makeElement('curvedMirror', { R_m: 0.1 });
+  const mU2  = makeElement('curvedMirror', { R_m: 0.1 });
+  const icaU = [makeElement('freeSpace', { L_m: 0.25 })];
+  const resU = CAVITY.solve({ mirror1: mU1, intracavity: icaU, mirror2: mU2, lambda_nm: 1064 });
+
+  addRow('t2', 'Unstable: stable = false',          'false', String(resU.stable), !resU.stable);
+  addRow('t2', 'Unstable: eigenmode = null',        'null',  String(resU.eigenmode), resU.eigenmode === null);
+  addRow('t2', 'Unstable: profile = null',          'null',  String(resU.profile),   resU.profile === null);
+  addRow('t2', 'Unstable: M_rt still returned',     '2×2',   String(resU.M_rt.length), resU.M_rt.length === 2);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CAVITY.scanLength — unit conversion & structure
+// Symmetric cavity R=200mm, scan L from 10mm to 390mm
+// ════════════════════════════════════════════════════════════════════════════
+{
+  const scan = CAVITY.scanLength({
+    R1_mm: 200, R2_mm: 200,
+    L_range_mm: [10, 390],
+    N: 50,
+    lambda_nm: 1064,
+  });
+
+  addRow('t3', 'scanLength returns 50 points',     '50',    String(scan.length),     scan.length === 50);
+  addRow('t3', 'L_mm unit: first ≈ 10',           '10',    f5(scan[0].L_mm),        near(scan[0].L_mm, 10, 0.01));
+  addRow('t3', 'L_mm unit: last ≈ 390',           '390',   f5(scan.at(-1).L_mm),    near(scan.at(-1).L_mm, 390, 0.01));
+  addRow('t3', 'w1_um in µm (>10)',               '>10 µm', f5(scan[0].w1_um),      scan[0].w1_um > 10);
+  addRow('t3', 'All points stable (0<L<2R=400)',  'true',  String(scan.every(r => r.stable)), scan.every(r => r.stable));
+  addRow('t3', 'All w1_um > 0',                   'true',  'true',                  scan.every(r => r.w1_um > 0));
+  addRow('t3', 'All w2_um > 0',                   'true',  'true',                  scan.every(r => r.w2_um > 0));
+  addRow('t3', 'Symmetric: w1_um ≈ w2_um',        'true',  'true',                  scan.every(r => Math.abs(r.w1_um - r.w2_um) < r.w1_um * 1e-9));
+
+  // Cross-check: L_mm and g1g2 product consistent
+  const crossOK = scan.every(r => {
+    const g = 1 - (r.L_mm * 1e-3) / 0.2;
+    return near(r.product, g * g, 1e-9);
+  });
+  addRow('t3', 'product = g² consistent with L_mm', 'true', String(crossOK), crossOK);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CAVITY.findMinWaistLength
+// ════════════════════════════════════════════════════════════════════════════
+{
+  // Hemispherical: w at flat mirror decreases as L→0, so min waist near L_min
+  const res = CAVITY.findMinWaistLength({
+    R1_mm: Infinity, R2_mm: 200,
+    L_range_mm: [1, 199],
+    N: 100,
+    lambda_nm: 1064,
+  });
+  addRow('t4', 'findMinWaistLength: result not null', 'not null', String(res !== null), res !== null);
+  addRow('t4', 'findMinWaistLength: L_mm in range',  'in [1,199]', f5(res.L_mm), res.L_mm >= 1 && res.L_mm <= 199);
+  addRow('t4', 'findMinWaistLength: w1_um > 0',      '> 0',  f5(res.w1_um),  res.w1_um > 0);
+
+  // All-unstable region: should return null
+  const resNull = CAVITY.findMinWaistLength({
+    R1_mm: 100, R2_mm: 100,
+    L_range_mm: [210, 400],
+    N: 20,
+    lambda_nm: 1064,
+  });
+  addRow('t4', 'findMinWaistLength: null for unstable range', 'null', String(resNull), resNull === null);
+}
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+const total = passed + failed;
+const sumEl = document.getElementById('summary');
+sumEl.textContent = `${passed}/${total} PASS${failed === 0 ? ' ✓ Phase 5 COMPLETE' : ` — ${failed} FAILED`}`;
+sumEl.style.color = failed === 0 ? '#3fb950' : '#f85149';
+</script>
+</body>
+</html>

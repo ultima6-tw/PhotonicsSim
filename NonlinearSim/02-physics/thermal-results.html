@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 16 — thermal.js Verification</title>
+<style>
+  body { font-family: monospace; margin: 20px; background: #111; color: #eee; }
+  h2 { color: #7af; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+  th { background: #222; color: #adf; text-align: left; padding: 6px 10px; }
+  td { padding: 5px 10px; border-bottom: 1px solid #333; font-size: 13px; }
+  .pass { color: #4f4; }
+  .fail { color: #f44; font-weight: bold; }
+  .val  { color: #fd8; }
+  #summary { font-size: 18px; margin-top: 16px; padding: 12px;
+             border: 2px solid; display: inline-block; }
+  .all-pass { border-color: #4f4; color: #4f4; }
+  .has-fail { border-color: #f44; color: #f44; }
+  .section-label { color: #aaa; font-size: 11px; font-style: italic; }
+</style>
+</head>
+<body>
+<h2>Phase 16 — thermal.js Verification</h2>
+<p>Temperature-corrected n(λ,T) for LBO, KTP, BBO. Key target: LBO noncritical PM at ~149°C.</p>
+
+<table id="results">
+<thead><tr><th>#</th><th>Test</th><th>Expected</th><th>Actual</th><th>Status</th></tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+<div id="summary"></div>
+
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="thermal.js"></script>
+<script>
+// ── LBO XY-plane Type-I biaxial PM angle at temperature T ─────────────────
+// PM condition: nz(1064,T) = n_fast(532,φ,T)
+// n_fast(532,φ) = [sin²φ/nx² + cos²φ/ny²]^(-1/2)
+// → sin²φ = (1/nz² - 1/ny²) / (1/nx² - 1/ny²)
+function lbo_xy_pm_angle_deg(T_C) {
+  const crys = thermoCorrectedCrystal('lbo', T_C);
+  const nz   = crys.n(1064e-9, 'z');
+  const nx   = crys.n(532e-9,  'x');
+  const ny   = crys.n(532e-9,  'y');
+  const iz2  = 1 / (nz * nz);
+  const ix2  = 1 / (nx * nx);
+  const iy2  = 1 / (ny * ny);
+  const sin2 = (iz2 - iy2) / (ix2 - iy2);
+  if (sin2 >= 1.0) return 90;           // noncritical (T ≥ T_noncrit)
+  if (sin2 <  0)   return null;         // no solution
+  return Math.asin(Math.sqrt(sin2)) * 180 / Math.PI;
+}
+
+// ── Test runner ───────────────────────────────────────────────────────────────
+const tbody = document.getElementById('tbody');
+let pass = 0, fail = 0;
+
+function fmt(v) {
+  if (v == null) return 'null';
+  if (typeof v === 'boolean') return v.toString();
+  if (typeof v === 'number')  return v.toFixed(6);
+  return String(v);
+}
+
+function check(label, actual, expected_str, pass_fn) {
+  const ok = pass_fn(actual);
+  const tr = document.createElement('tr');
+  const n  = pass + fail + 1;
+  tr.innerHTML =
+    `<td>${n}</td>` +
+    `<td>${label}</td>` +
+    `<td class="val">${expected_str}</td>` +
+    `<td class="val">${fmt(actual)}</td>` +
+    `<td class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td>`;
+  tbody.appendChild(tr);
+  ok ? pass++ : fail++;
+}
+
+function section(name) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td colspan="5" class="section-label">── ${name} ──</td>`;
+  tbody.appendChild(tr);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GROUP A: LBO Noncritical PM Temperature
+// ═════════════════════════════════════════════════════════════════════════════
+section('A — LBO noncritical PM temperature');
+
+const T_nc = lbo_noncritical_T(1064);
+check('lbo_noncritical_T(1064): T_nc in [145, 153]°C',
+  T_nc, '≈ 149°C',
+  v => v >= 145 && v <= 153);
+
+check('lbo_noncritical_T(1064): T_nc > 100°C (not trivial)',
+  T_nc, '> 100',
+  v => v > 100);
+
+// At T_nc: nz(1064) ≈ nx(532)
+const nz_nc = nAtT('lbo', 'z', 1064, T_nc);
+const nx_nc = nAtT('lbo', 'x', 532,  T_nc);
+check('nz(1064, T_nc) ≈ nx(532, T_nc) [gap < 0.0005]',
+  Math.abs(nz_nc - nx_nc), '< 0.0005',
+  v => v < 0.0005);
+
+check('At T_nc: both indices ~1.60 ± 0.01',
+  nz_nc, '≈ 1.60',
+  v => v > 1.59 && v < 1.61);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GROUP B: LBO PM Angle vs Temperature
+// ═════════════════════════════════════════════════════════════════════════════
+section('B — LBO XY-plane Type-I PM angle vs temperature');
+
+const phi_25  = lbo_xy_pm_angle_deg(25);
+const phi_100 = lbo_xy_pm_angle_deg(100);
+const phi_149 = lbo_xy_pm_angle_deg(149);
+
+check('PM angle at T=25°C: in [9°, 14°]',
+  phi_25, '≈ 11.3°',
+  v => v != null && v >= 9 && v <= 14);
+
+check('PM angle at T=100°C: in [35°, 55°] (midway)',
+  phi_100, '≈ 45°',
+  v => v != null && v >= 35 && v <= 55);
+
+check('PM angle at T=149°C: ≥ 85° (noncritical)',
+  phi_149, '≥ 85° (→90°)',
+  v => v != null && v >= 85);
+
+check('PM angle increases monotonically 25→100→149°C',
+  phi_100 > phi_25 && phi_149 > phi_100, 'true',
+  v => v === true);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GROUP C: nAtT — index correction direction
+// ═════════════════════════════════════════════════════════════════════════════
+section('C — nAtT: thermal correction direction');
+
+// LBO x-axis at 532nm: strongly positive dn/dT
+check('LBO nx(532nm): increases with T (25→149°C)',
+  nAtT('lbo','x',532,149) > nAtT('lbo','x',532,25), 'true', v => v === true);
+
+// LBO z-axis at 1064nm: weakly negative dn/dT
+check('LBO nz(1064nm): decreases with T (25→149°C)',
+  nAtT('lbo','z',1064,149) < nAtT('lbo','z',1064,25), 'true', v => v === true);
+
+// LBO y-axis at 532nm: positive dn/dT
+check('LBO ny(532nm): increases with T (25→149°C)',
+  nAtT('lbo','y',532,149) > nAtT('lbo','y',532,25), 'true', v => v === true);
+
+// No correction at reference temperature
+check('nAtT(lbo,z,1064,25) = LBO.nz(1064nm) [no correction at T_ref]',
+  Math.abs(nAtT('lbo','z',1064,25) - LBO.nz(1064e-9)), '< 1e-10',
+  v => v < 1e-10);
+
+// KTP: all axes positive dn/dT
+check('KTP nx(1064nm): increases with T', nAtT('ktp','x',1064,100) > nAtT('ktp','x',1064,25), 'true', v => v);
+check('KTP ny(1064nm): increases with T', nAtT('ktp','y',1064,100) > nAtT('ktp','y',1064,25), 'true', v => v);
+check('KTP nz(1064nm): increases with T', nAtT('ktp','z',1064,100) > nAtT('ktp','z',1064,25), 'true', v => v);
+
+// BBO: negative dn/dT for both axes
+check('BBO no(532nm): decreases with T', nAtT('bbo','o',532,100) < nAtT('bbo','o',532,25), 'true', v => v);
+check('BBO ne(532nm): decreases with T', nAtT('bbo','e',532,100) < nAtT('bbo','e',532,25), 'true', v => v);
+
+// BBO: |dno/dT| > |dne/dT| (ordinary more temperature-sensitive)
+const dno = nAtT('bbo','o',532,25) - nAtT('bbo','o',532,100);
+const dne = nAtT('bbo','e',532,25) - nAtT('bbo','e',532,100);
+check('BBO |dno/dT| > |dne/dT| (ordinary more sensitive)',
+  dno > dne, 'true', v => v === true);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GROUP D: thermoCorrectedCrystal — wrapper interface
+// ═════════════════════════════════════════════════════════════════════════════
+section('D — thermoCorrectedCrystal wrapper');
+
+// dT=0 returns base crystal directly
+const base = thermoCorrectedCrystal('lbo', 25);
+check('thermoCorrectedCrystal("lbo",25) returns base (dT=0)',
+  base === LBO, 'true (identity)', v => v === true);
+
+// Wrapper produces same values as nAtT
+const wrapper_149 = thermoCorrectedCrystal('lbo', 149);
+const diff_x = Math.abs(wrapper_149.n(532e-9,'x') - nAtT('lbo','x',532,149));
+const diff_z = Math.abs(wrapper_149.n(1064e-9,'z') - nAtT('lbo','z',1064,149));
+check('wrapper.n(532nm,x) matches nAtT [diff < 1e-12]', diff_x, '< 1e-12', v => v < 1e-12);
+check('wrapper.n(1064nm,z) matches nAtT [diff < 1e-12]', diff_z, '< 1e-12', v => v < 1e-12);
+
+// PPLN falls through to base (no T correction yet)
+const ppln_t = thermoCorrectedCrystal('ppln', 100);
+check('thermoCorrectedCrystal("ppln",100) returns base PPLN',
+  ppln_t === PPLN, 'true (PPLN handled in ppln.js)', v => v === true);
+
+// Wrapper inherits crystal_type from base
+check('LBO wrapper at T=149°C: crystal_type = biaxial_negative',
+  wrapper_149.crystal_type, 'biaxial_negative',
+  v => v === 'biaxial_negative');
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GROUP E: α(λ) interpolation
+// ═════════════════════════════════════════════════════════════════════════════
+section('E — thermo-optic coefficient α(λ) calibration check');
+
+// At T=149°C: LBO nx(532) - base nx(532) = α(532)×ΔT
+const dT_cal = 149 - 25;
+const dnx_532 = nAtT('lbo','x',532,149) - LBO.nx(532e-9);
+const alpha_x_532 = dnx_532 / dT_cal;
+check('α_x(532nm) ≈ 2.0e-4 /°C [within 5%]',
+  alpha_x_532, '≈ 2.0e-4 /°C',
+  v => Math.abs(v - 2.0e-4) / 2.0e-4 < 0.05);
+
+const dnz_1064 = nAtT('lbo','z',1064,149) - LBO.nz(1064e-9);
+const alpha_z_1064 = dnz_1064 / dT_cal;
+check('α_z(1064nm) ≈ −1.8e-5 /°C [within 5%]',
+  alpha_z_1064, '≈ −1.8e-5 /°C',
+  v => Math.abs(v - (-1.8e-5)) / 1.8e-5 < 0.05);
+
+// At 800nm: α_x should be between α_x(532) and α_x(1064)
+const dn_800 = nAtT('lbo','x',800,149) - LBO.nx(800e-9);
+const alpha_x_800 = dn_800 / dT_cal;
+check('α_x(800nm) between α_x(532) and α_x(1064) [monotone interp]',
+  alpha_x_800, 'between 6e-5 and 2e-4',
+  v => v > 6e-5 && v < 2.0e-4);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GROUP F: LBO temperature tuning — physical sanity
+// ═════════════════════════════════════════════════════════════════════════════
+section('F — LBO temperature tuning: physical sanity');
+
+// T_noncrit for 800nm should be different from 1064nm (different gap)
+const T_nc_800 = lbo_noncritical_T(800);
+check('lbo_noncritical_T(800) ≠ lbo_noncritical_T(1064) [wavelength dependent]',
+  Math.abs(T_nc_800 - T_nc) > 5, 'true (>5°C apart)', v => v === true);
+
+// Index change over full temperature sweep (25→200°C) is physically reasonable
+const dNx_full = nAtT('lbo','x',532,200) - LBO.nx(532e-9);
+check('LBO Δnx(532nm) over 175°C: < 0.1 [physically reasonable]',
+  Math.abs(dNx_full), '< 0.1',
+  v => v < 0.1);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Summary
+// ═════════════════════════════════════════════════════════════════════════════
+const total = pass + fail;
+const sumDiv = document.getElementById('summary');
+sumDiv.textContent = `${pass}/${total} PASS`;
+sumDiv.className = fail === 0 ? 'all-pass' : 'has-fail';
+
+// Print key numerical values for design reference
+console.log('=== Phase 16 Key Values ===');
+console.log(`T_noncrit(LBO, 1064→532nm) = ${T_nc.toFixed(1)} °C`);
+console.log(`nz(1064, T_nc) = ${nz_nc.toFixed(6)}`);
+console.log(`nx(532,  T_nc) = ${nx_nc.toFixed(6)}`);
+console.log(`PM angle @ 25°C  = ${phi_25?.toFixed(2)}°`);
+console.log(`PM angle @ 100°C = ${phi_100?.toFixed(2)}°`);
+console.log(`PM angle @ 149°C = ${phi_149?.toFixed(2)}°  (noncritical)`);
+console.log(`α_x(532nm)  = ${alpha_x_532.toExponential(2)} /°C`);
+console.log(`α_z(1064nm) = ${alpha_z_1064.toExponential(2)} /°C`);
+</script>
+</body>
+</html>

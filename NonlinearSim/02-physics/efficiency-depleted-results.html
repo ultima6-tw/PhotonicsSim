@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 12 — Depleted Pump tanh² Verification</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 30px; }
+  table { border-collapse: collapse; margin: 10px 0; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; }
+  .pass { color: #3fb950; }
+  .fail { color: #f85149; }
+  .info { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 20px; }
+</style>
+</head>
+<body>
+<h1>Phase 12 — Depleted Pump (tanh²) Verification</h1>
+<p>Verifies: <code>shg_efficiency</code> now uses Armstrong 1962 tanh² formula.</p>
+
+<h2>1. Analytic Check — tanh²(γ) values</h2>
+<table id="t1">
+<tr><th>γ</th><th>Expected η = tanh²(γ)</th><th>Computed η</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>2. Small-Signal Limit — tanh² ≈ γ² = Γ·P</h2>
+<p>At low power, tanh²(γ) ≈ γ², so depleted and undepleted formulas must agree to &lt;1%.</p>
+<table id="t2">
+<tr><th>Case</th><th>η (tanh²)</th><th>η (linear Γ·P)</th><th>Relative diff</th><th>Result</th></tr>
+</table>
+
+<h2>3. Saturation Check — η must stay &lt; 100%</h2>
+<p>Old formula allows η &gt; 1 at high power; tanh² is bounded.</p>
+<table id="t3">
+<tr><th>Crystal / config</th><th>Power (W)</th><th>η (tanh²)</th><th>η (old linear)</th><th>Result</th></tr>
+</table>
+
+<h2>4. KTP Design Case — cross-check with Phase 6 values</h2>
+<p>KTP Type-II, L=5mm, w₀=13.55µm (f=100mm), 1064nm pump.<br>
+Phase 6 baseline (undepleted): η=0.037% at 150mW. At low power, new formula should match.</p>
+<table id="t4">
+<tr><th>Power (W)</th><th>η tanh² (%)</th><th>η linear (%)</th><th>Diff</th><th>Result</th></tr>
+</table>
+
+<div id="summary"></div>
+
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+<script src="efficiency.js"></script>
+<script>
+let passed = 0, failed = 0;
+
+function row(tableId, cells, ok) {
+  const tr = document.createElement('tr');
+  cells.forEach((c, i) => {
+    const td = document.createElement('td');
+    td.textContent = c;
+    if (i === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td);
+  });
+  document.getElementById(tableId).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+
+function fmt(v, dec=6) { return v.toExponential(dec); }
+function fmtPct(v) { return (v * 100).toFixed(6) + '%'; }
+
+// ── Section 1: Analytic tanh² values ─────────────────────────────────────────
+// Fake crystal params: use values that give known gamma
+// gamma = sqrt(Gamma * P), so at given gamma we check the output
+// We test shg_efficiency with params chosen so gamma = target value.
+// Easiest: we know _shg_Gamma internally, so we test tanh² math directly here.
+const tanh2Cases = [
+  { gamma: 0.1,  expected: Math.tanh(0.1)**2 },
+  { gamma: 0.5,  expected: Math.tanh(0.5)**2 },
+  { gamma: 1.0,  expected: Math.tanh(1.0)**2 },  // 0.58000
+  { gamma: 2.0,  expected: Math.tanh(2.0)**2 },  // 0.93004
+  { gamma: 3.0,  expected: Math.tanh(3.0)**2 },  // 0.99013
+  { gamma: 5.0,  expected: Math.tanh(5.0)**2 },  // ~0.99999
+];
+
+// Use BBO Type-I with known params to get Gamma, then set P to hit target gamma
+const bbo = getCrystal('bbo');
+// At λ=1064nm, n_o=1.6551, θ_PM=22.8°, ne_sh(532)=1.6551
+const n_pump = bbo.n(1064e-9, 'o');
+const n_sh   = neEff(22.8 * Math.PI/180, 532e-9, bbo);
+const deff   = 2.00;   // pm/V
+const L_mm   = 10.0;
+const w0_um  = 50.0;
+
+// Compute Gamma manually to get P for target gamma
+// _C and _EPS already defined in efficiency.js — do NOT redeclare (causes SyntaxError)
+const d    = deff * 1e-12;
+const om   = 2 * Math.PI * _C / (1064e-9);
+const L    = L_mm * 1e-3;
+const A    = Math.PI * (w0_um * 1e-6)**2;
+const Gamma = 2 * om**2 * d**2 * L**2 / (n_pump**2 * n_sh * _C**3 * _EPS * A);
+
+for (const { gamma, expected } of tanh2Cases) {
+  const P = gamma**2 / Gamma;
+  const eta = shg_efficiency(deff, 1064, n_pump, n_sh, L_mm, P, w0_um);
+  const err = Math.abs(eta - expected) / expected;
+  const ok = err < 1e-8;
+  row('t1', [
+    gamma.toFixed(1),
+    fmt(expected),
+    fmt(eta),
+    (err * 100).toExponential(1) + '%',
+    ok ? 'PASS' : 'FAIL'
+  ], ok);
+}
+
+// ── Section 2: Small-signal limit ────────────────────────────────────────────
+// At very low P, tanh² ≈ Γ·P (linear). Relative diff must be < 1%.
+const smallPowerCases = [
+  { label: 'BBO 1064nm, P=1mW',  P: 0.001 },
+  { label: 'BBO 1064nm, P=10mW', P: 0.010 },
+  { label: 'BBO 1064nm, P=50mW', P: 0.050 },
+];
+for (const { label, P } of smallPowerCases) {
+  const eta_tanh  = shg_efficiency(deff, 1064, n_pump, n_sh, L_mm, P, w0_um);
+  const eta_linear = Gamma * P;
+  const diff = Math.abs(eta_tanh - eta_linear) / eta_linear;
+  const ok = diff < 0.01;  // < 1%
+  row('t2', [
+    label,
+    fmtPct(eta_tanh),
+    fmtPct(eta_linear),
+    (diff * 100).toFixed(4) + '%',
+    ok ? 'PASS' : 'FAIL'
+  ], ok);
+}
+
+// ── Section 3: Saturation check ───────────────────────────────────────────────
+// Old formula: η = Γ·P could exceed 1. tanh² stays < 1 always.
+// Use PPLN (highest Gamma) to stress test.
+const ppln = getCrystal('ppln');
+const n_ppln = ppln.n(1064e-9, 'e');
+const n_ppln_sh = ppln.n(532e-9, 'e');
+const deff_ppln = 17.2;
+const L_pp = 10.0, w0_pp = 20.0;
+
+const Gamma_ppln = (function() {
+  const d2 = deff_ppln * 1e-12;
+  const om2 = 2 * Math.PI * _C / 1064e-9;
+  const L2  = L_pp * 1e-3;
+  const A2  = Math.PI * (w0_pp * 1e-6)**2;
+  return 2 * om2**2 * d2**2 * L2**2 / (n_ppln**2 * n_ppln_sh * _C**3 * _EPS * A2);
+})();
+
+const highPCases = [
+  { P: 1.0,    label: 'PPLN 10mm, w₀=20µm, 1W'  },
+  { P: 10.0,   label: 'PPLN 10mm, w₀=20µm, 10W' },
+  { P: 100.0,  label: 'PPLN 10mm, w₀=20µm, 100W'},
+];
+for (const { P, label } of highPCases) {
+  const eta_tanh  = shg_efficiency(deff_ppln, 1064, n_ppln, n_ppln_sh, L_pp, P, w0_pp);
+  const eta_linear = Gamma_ppln * P;
+  // tanh² must be < 1; linear may exceed 1 at high power
+  const ok = eta_tanh < 1.0 && eta_tanh > 0;
+  row('t3', [
+    label,
+    P.toFixed(0) + ' W',
+    fmtPct(eta_tanh),
+    eta_linear > 1 ? '>' + eta_linear.toFixed(1) + ' (UNPHYSICAL)' : fmtPct(eta_linear),
+    ok ? 'PASS (bounded)' : 'FAIL'
+  ], ok);
+}
+
+// ── Section 4: KTP design case cross-check ───────────────────────────────────
+// KTP Type-II, L=5mm, w₀=13.55µm, 1064nm
+// Phase 6 baseline: η≈0.037% at 150mW (undepleted)
+const ktp = getCrystal('ktp');
+const n_ktp_pump = (ktp.n(1064e-9, 'x') + ktp.n(1064e-9, 'y')) / 2; // approximate Type-II average
+const n_ktp_sh   = ktp.n(532e-9, 'z');  // SH polarization
+const deff_ktp   = 3.50;
+const L_ktp = 5.0, w0_ktp = 13.55;
+
+const Gamma_ktp = (function() {
+  const d3 = deff_ktp * 1e-12;
+  const om3 = 2 * Math.PI * _C / 1064e-9;
+  const L3  = L_ktp * 1e-3;
+  const A3  = Math.PI * (w0_ktp * 1e-6)**2;
+  return 2 * om3**2 * d3**2 * L3**2 / (n_ktp_pump**2 * n_ktp_sh * _C**3 * _EPS * A3);
+})();
+
+const ktpCases = [0.001, 0.010, 0.150, 1.0, 10.0];
+for (const P of ktpCases) {
+  const eta_tanh  = shg_efficiency(deff_ktp, 1064, n_ktp_pump, n_ktp_sh, L_ktp, P, w0_ktp);
+  const eta_linear = Gamma_ktp * P;
+  const diff = Math.abs(eta_tanh - eta_linear) / Math.max(eta_linear, 1e-12);
+  const ok = P <= 0.01 ? diff < 0.01 : eta_tanh < 1.0;
+  row('t4', [
+    P.toFixed(3) + ' W',
+    (eta_tanh * 100).toFixed(5) + '%',
+    (eta_linear * 100).toFixed(5) + '%',
+    (diff * 100).toFixed(3) + '%',
+    P <= 0.01 ? (ok ? 'PASS (matches linear)' : 'FAIL') : (ok ? 'PASS (bounded)' : 'FAIL')
+  ], ok);
+}
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+const total = passed + failed;
+document.getElementById('summary').innerHTML =
+  `<span class="${failed === 0 ? 'pass' : 'fail'}">` +
+  `${passed}/${total} passed` +
+  (failed === 0 ? ' ✓ Phase 12 COMPLETE' : ` — ${failed} FAILED`) +
+  `</span>`;
+</script>
+</body>
+</html>

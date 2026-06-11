@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 13 — Boyd-Kleinman h(ξ,B) Verification</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+  h1 { color: #7ec8e3; }
+  h2 { color: #4a7a9a; margin-top: 28px; }
+  table { border-collapse: collapse; margin: 8px 0; }
+  th { background: #1a2a3a; color: #7ec8e3; padding: 6px 14px; text-align: left; }
+  td { padding: 5px 14px; border-bottom: 1px solid #1a2a3a; }
+  .pass { color: #3fb950; } .fail { color: #f85149; } .info { color: #d29922; }
+  #summary { font-size: 1.2em; margin-top: 24px; padding: 10px;
+             border: 1px solid #4a7a9a; display: inline-block; }
+  canvas { display: block; margin: 12px 0; background: #0a1520; border: 1px solid #1a2a3a; }
+</style>
+</head>
+<body>
+<h1>Phase 13 — Boyd-Kleinman h(ξ, B) Verification</h1>
+<p>Verifies: <code>bk-focus.js</code> h(ξ,B) analytical formula and optimal focusing calculation.</p>
+<p class="info">Note: ξ_opt≈1.391 (σ=0, Δk=0). The commonly cited ξ=2.84 is for globally optimal Δk≠0.</p>
+
+<h2>1. Analytical h(ξ, B=0) Values</h2>
+<table id="t1">
+<tr><th>ξ</th><th>Expected arctan²(ξ)/ξ</th><th>bk_h(ξ,0)</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>2. Plane-Wave Limit: h(ξ→0)/ξ → 1</h2>
+<table id="t2">
+<tr><th>ξ</th><th>h(ξ)/ξ</th><th>Expected ≈1</th><th>Error</th><th>Result</th></tr>
+</table>
+
+<h2>3. Optimal Focusing ξ_opt (σ=0, B=0)</h2>
+<table id="t3">
+<tr><th>Crystal</th><th>L (mm)</th><th>ξ_opt</th><th>w₀_opt (µm)</th><th>h_max</th><th>Result</th></tr>
+</table>
+
+<h2>4. BK vs Plane-Wave: η at different w₀ (KTP, L=5mm, P=150mW)</h2>
+<p>BK predicts a peak; plane-wave always favors tighter focus (unphysical).</p>
+<table id="t4">
+<tr><th>w₀ (µm)</th><th>ξ</th><th>η_BK (%)</th><th>η_plane (%)</th><th>BK/Plane ratio</th></tr>
+</table>
+
+<h2>5. Phase 12 Backward Compatibility: small-signal BK ≈ tanh²(plane-wave)</h2>
+<table id="t5">
+<tr><th>Crystal / P</th><th>η_BK (new)</th><th>η_plane12 (old)</th><th>Notes</th><th>Result</th></tr>
+</table>
+
+<h2>6. Efficiency vs w₀ Curve (KTP, L=5mm, P=150mW)</h2>
+<canvas id="cv" width="700" height="220"></canvas>
+
+<div id="summary"></div>
+
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+<script src="bk-focus.js"></script>
+<script src="efficiency.js"></script>
+<script>
+let passed = 0, failed = 0;
+function row(tid, cells, ok) {
+  const tr = document.createElement('tr');
+  cells.forEach((c, i) => {
+    const td = document.createElement('td');
+    td.textContent = c;
+    if (i === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td);
+  });
+  document.getElementById(tid).appendChild(tr);
+  ok ? passed++ : failed++;
+}
+function pct(v) { return (v*100).toFixed(5) + '%'; }
+
+// ── Section 1: Analytical h values ───────────────────────────────────────────
+const xiVals = [0.1, 0.5, 1.0, 1.391, 2.0, 2.84, 5.0];
+for (const xi of xiVals) {
+  const expected = Math.atan(xi)**2 / xi;
+  const computed = bk_h(xi, 0);
+  const err = Math.abs(computed - expected) / expected;
+  const ok = err < 1e-10;
+  row('t1', [
+    xi.toFixed(3),
+    expected.toFixed(8),
+    computed.toFixed(8),
+    err.toExponential(1),
+    ok ? 'PASS' : 'FAIL'
+  ], ok);
+}
+
+// ── Section 2: Plane-wave limit h(ξ)/ξ → 1 ───────────────────────────────────
+// h(ξ)/ξ → 1 as ξ→0. Tolerance scales with ξ² (second-order correction).
+const limCases = [{xi:0.001,tol:1e-5},{xi:0.01,tol:1e-3},{xi:0.05,tol:3e-3}];
+for (const {xi, tol} of limCases) {
+  const ratio = bk_h(xi, 0) / xi;
+  const err = Math.abs(ratio - 1.0);
+  const ok = err < tol;
+  row('t2', [xi, ratio.toFixed(7), '≈1.000', err.toExponential(2), ok ? 'PASS' : 'FAIL'], ok);
+}
+
+// ── Section 3: Optimal focusing ──────────────────────────────────────────────
+const crystalCases = [
+  { id: 'bbo', L: 10, lam: 1064, n: 1.6551, label: 'BBO 1064nm' },
+  { id: 'ktp', L: 5,  lam: 1064, n: 1.80,   label: 'KTP 1064nm' },
+  { id: 'ppln',L: 30, lam: 1064, n: 2.154,  label: 'PPLN 1064nm' },
+];
+for (const cc of crystalCases) {
+  const opt = bk_optimal_w0(cc.L, cc.lam, cc.n, 0);
+  // ξ_opt should be ~1.391 for all (B=0)
+  const ok = Math.abs(opt.xi_opt - 1.391) < 0.005;
+  row('t3', [
+    cc.label, cc.L,
+    opt.xi_opt.toFixed(4),
+    opt.w0_um.toFixed(2),
+    opt.h_max.toFixed(5),
+    ok ? 'PASS (ξ_opt≈1.391)' : 'FAIL'
+  ], ok);
+}
+
+// ── Section 4: BK vs plane-wave at different w₀ ──────────────────────────────
+const ktp   = getCrystal('ktp');
+const nk_p  = (ktp.n(1064e-9,'x') + ktp.n(1064e-9,'y')) / 2;
+const nk_sh = ktp.n(532e-9, 'z');
+const deff_ktp = 3.50, L_ktp = 5.0, P_ktp = 0.15;
+
+// plane-wave Γ function (old formula)
+function Gamma_plane(w0_um) {
+  return _shg_Gamma(deff_ktp, 1064, nk_p, nk_sh, L_ktp, w0_um);
+}
+
+const w0_scan = [5, 8, 12, 18, 25, 35, 50, 80];
+let bk_peak_idx = 0, bk_peak_eta = 0;
+for (let i = 0; i < w0_scan.length; i++) {
+  const w0 = w0_scan[i];
+  const xi = bk_xi(L_ktp, 1064, nk_p, w0);
+  const eta_bk    = shg_efficiency(deff_ktp, 1064, nk_p, nk_sh, L_ktp, P_ktp, w0);
+  const eta_plane = Math.tanh(Math.sqrt(Gamma_plane(w0) * P_ktp)) ** 2;
+  if (eta_bk > bk_peak_eta) { bk_peak_eta = eta_bk; bk_peak_idx = i; }
+  const ratio = eta_bk / eta_plane;
+  const td = document.createElement('tr');
+  td.innerHTML = `<td>${w0}</td><td>${xi.toFixed(3)}</td><td>${pct(eta_bk)}</td><td>${pct(eta_plane)}</td><td>${ratio.toFixed(3)}</td>`;
+  document.getElementById('t4').appendChild(td);
+}
+// BK peak should be at w₀_opt≈19µm (ξ≈1.39 for KTP L=5mm)
+const bk_peak_ok = w0_scan[bk_peak_idx] >= 12 && w0_scan[bk_peak_idx] <= 30;
+const fakeRow = document.createElement('tr');
+fakeRow.innerHTML = `<td colspan="4"><b>BK peak at w₀=${w0_scan[bk_peak_idx]}µm, ξ=${bk_xi(L_ktp,1064,nk_p,w0_scan[bk_peak_idx]).toFixed(2)}</b></td><td class="${bk_peak_ok?'pass':'fail'}">${bk_peak_ok?'PASS':'FAIL'}</td>`;
+document.getElementById('t4').appendChild(fakeRow);
+if (bk_peak_ok) passed++; else failed++;
+
+// ── Section 5: Backward compatibility ────────────────────────────────────────
+// At low power, BK with optimal w₀ should give higher η than plane-wave at same w₀
+// But at the SAME w₀ (not optimal), BK should be close to tanh²(plane) for small ξ
+const bboCryst = getCrystal('bbo');
+const nb_p  = bboCryst.n(1064e-9, 'o');
+const nb_sh = neEff(22.8*Math.PI/180, 532e-9, bboCryst);
+const compat = [
+  { w0: 200, P: 0.001, label: 'BBO 200µm, 1mW (ξ=0.024)' },
+  { w0: 100, P: 0.010, label: 'BBO 100µm, 10mW (ξ=0.097)' },
+];
+for (const { w0, P, label } of compat) {
+  const eta_bk    = shg_efficiency(2.0, 1064, nb_p, nb_sh, 10, P, w0);
+  const G_pl      = _shg_Gamma(2.0, 1064, nb_p, nb_sh, 10, w0);
+  const eta_plane = Math.tanh(Math.sqrt(G_pl * P)) ** 2;
+  const diff = Math.abs(eta_bk - eta_plane) / eta_plane;
+  // At very small ξ, BK ≈ plane-wave to <2%
+  const ok = diff < 0.02;
+  row('t5', [label, pct(eta_bk), pct(eta_plane), `diff=${(diff*100).toFixed(3)}%`, ok ? 'PASS' : 'FAIL'], ok);
+}
+
+// ── Section 6: Canvas curve ───────────────────────────────────────────────────
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const pad = { l:60, r:20, t:20, b:40 };
+const plotW = W-pad.l-pad.r, plotH = H-pad.t-pad.b;
+
+const w0s = [], etaBKs = [], etaPlanes = [];
+for (let w0 = 3; w0 <= 100; w0 += 1) {
+  w0s.push(w0);
+  etaBKs.push(shg_efficiency(deff_ktp, 1064, nk_p, nk_sh, L_ktp, P_ktp, w0) * 100);
+  etaPlanes.push(Math.tanh(Math.sqrt(Gamma_plane(w0)*P_ktp))**2 * 100);
+}
+const maxEta = Math.max(...etaBKs, ...etaPlanes.filter(v=>v<1)) * 1.15;
+const minW0=3, maxW0=100;
+
+function xPos(w0) { return pad.l + (w0-minW0)/(maxW0-minW0)*plotW; }
+function yPos(eta) { return pad.t + plotH - (eta/maxEta)*plotH; }
+
+ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,H);
+// Axes
+ctx.strokeStyle='#2a4a6a'; ctx.lineWidth=1;
+ctx.beginPath(); ctx.moveTo(pad.l,pad.t); ctx.lineTo(pad.l,pad.t+plotH);
+ctx.lineTo(pad.l+plotW,pad.t+plotH); ctx.stroke();
+// Labels
+ctx.fillStyle='#7ec8e3'; ctx.font='11px monospace';
+ctx.fillText('η (%)', 4, pad.t+10);
+ctx.fillText('w₀ (µm)', pad.l+plotW/2-20, H-4);
+for (let w=10; w<=100; w+=20) {
+  const xp = xPos(w); ctx.strokeStyle='#1a3a5a';
+  ctx.beginPath(); ctx.moveTo(xp,pad.t); ctx.lineTo(xp,pad.t+plotH); ctx.stroke();
+  ctx.fillStyle='#6a9aaa'; ctx.fillText(w, xp-8, pad.t+plotH+14);
+}
+// BK curve (blue)
+ctx.strokeStyle='#7ec8e3'; ctx.lineWidth=2;
+ctx.beginPath();
+for (let i=0; i<w0s.length; i++) {
+  const x=xPos(w0s[i]), y=yPos(etaBKs[i]);
+  i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+}
+ctx.stroke();
+// Plane-wave (clamped to visible range, orange)
+ctx.strokeStyle='#d29922'; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+ctx.beginPath(); let first=true;
+for (let i=0; i<w0s.length; i++) {
+  if (etaPlanes[i] > maxEta*1.5) { first=true; continue; }
+  const x=xPos(w0s[i]), y=yPos(Math.min(etaPlanes[i],maxEta*0.98));
+  first ? ctx.moveTo(x,y) : ctx.lineTo(x,y); first=false;
+}
+ctx.stroke(); ctx.setLineDash([]);
+// Legend
+ctx.fillStyle='#7ec8e3'; ctx.fillText('── BK (correct)', pad.l+8, pad.t+16);
+ctx.fillStyle='#d29922'; ctx.fillText('-- Plane-wave (overestimates)', pad.l+8, pad.t+30);
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+document.getElementById('summary').innerHTML =
+  `<span class="${failed===0?'pass':'fail'}">${passed}/${passed+failed} passed` +
+  `${failed===0?' ✓ Phase 13 COMPLETE':` — ${failed} FAILED`}</span>`;
+</script>
+</body>
+</html>

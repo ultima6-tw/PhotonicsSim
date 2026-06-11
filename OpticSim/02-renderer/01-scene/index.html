@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>01-scene demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+  #viewport { width: 100vw; height: 100vh; }
+  #overlay {
+    position: fixed; top: 1rem; left: 1rem;
+    background: rgba(13,17,23,0.82); border: 1px solid #2a4a6a;
+    padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.78rem;
+    pointer-events: none; line-height: 1.7;
+  }
+  #overlay h3 { color: #7ec8e3; margin-bottom: 0.4rem; font-size: 0.85rem; }
+  .dim { color: #5a7a9a; }
+  #controls-hint {
+    position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(13,17,23,0.7); border: 1px solid #2a3a4a;
+    padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.72rem; color: #4a6a8a;
+  }
+</style>
+</head>
+<body>
+<div id="viewport"></div>
+
+<div id="overlay">
+  <h3>01-scene — Scene Scaffolding</h3>
+  <div>System: <span id="sys-info">1.3 m optical path</span></div>
+  <div class="dim">Objects in scene: <span id="obj-count">—</span></div>
+  <div class="dim">Camera: <span id="cam-pos">—</span></div>
+</div>
+
+<div id="controls-hint">
+  Left-drag: rotate &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom
+</div>
+
+<!-- Three.js + OrbitControls from CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// Inline-load OrbitControls (r128 compatible)
+// We attach it to THREE so scene.js can access it as THREE_OrbitControls
+</script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+  // Expose OrbitControls the way scene.js expects
+  window.THREE_OrbitControls = THREE.OrbitControls;
+</script>
+<script src="scene.js"></script>
+<script>
+  const container = document.getElementById('viewport');
+  const S = createScene(container);
+
+  // ── Test objects: coloured spheres along the optical axis ──────────────────
+  const L = 1.3;   // system length (m)
+  S.setSystemLength(L);
+
+  // Origin marker (red)
+  const originGeo = new THREE.SphereGeometry(0.003, 16, 16);
+  const originMat = new THREE.MeshPhongMaterial({ color: 0xe74c3c, emissive: 0x300000 });
+  const originSph = new THREE.Mesh(originGeo, originMat);
+  originSph.position.set(0, 0, 0);
+  S.addToScene(originSph);
+
+  // Midpoint marker (green)
+  const midGeo = new THREE.SphereGeometry(0.003, 16, 16);
+  const midMat = new THREE.MeshPhongMaterial({ color: 0x2ecc71, emissive: 0x003010 });
+  const midSph = new THREE.Mesh(midGeo, midMat);
+  midSph.position.set(0, 0, L / 2);
+  S.addToScene(midSph);
+
+  // End marker (blue)
+  const endGeo = new THREE.SphereGeometry(0.003, 16, 16);
+  const endMat = new THREE.MeshPhongMaterial({ color: 0x3498db, emissive: 0x001030 });
+  const endSph = new THREE.Mesh(endGeo, endMat);
+  endSph.position.set(0, 0, L);
+  S.addToScene(endSph);
+
+  // Thin semi-transparent tube along optical axis (visual reference)
+  const tubeGeo = new THREE.CylinderGeometry(0.0005, 0.0005, L, 12);
+  const tubeMat = new THREE.MeshBasicMaterial({ color: 0x7ec8e3, transparent: true, opacity: 0.15 });
+  const tube    = new THREE.Mesh(tubeGeo, tubeMat);
+  tube.rotation.x = Math.PI / 2;
+  tube.position.set(0, 0, L / 2);
+  S.addToScene(tube);
+
+  // ── Overlay update ─────────────────────────────────────────────────────────
+  document.getElementById('sys-info').textContent = `${L} m optical path`;
+  document.getElementById('obj-count').textContent = S.scene.children.length;
+
+  S.controls.addEventListener('change', () => {
+    const p = S.camera.position;
+    document.getElementById('cam-pos').textContent =
+      `(${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`;
+  });
+
+  S.animate();
+</script>
+</body>
+</html>

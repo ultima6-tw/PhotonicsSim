@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phase 9 — Biaxial PM Solver Verification</title>
+<style>
+  body  { background:#0d1117; color:#c0d0e0; font-family:monospace; padding:1.5rem; }
+  h1   { color:#7ec8e3; font-size:1.1rem; margin-bottom:0.4rem; }
+  h2   { color:#4a9a7a; font-size:0.85rem; margin:1.4rem 0 0.4rem; border-bottom:1px solid #1a3a2a; padding-bottom:3px; }
+  table { border-collapse:collapse; width:100%; margin-bottom:0.6rem; font-size:0.78rem; }
+  th   { color:#4a7a9a; text-align:left; padding:3px 12px 3px 0; border-bottom:1px solid #1a2a3a; }
+  td   { padding:2px 12px 2px 0; }
+  .pass { color:#40cc70; } .fail { color:#e05050; }
+  .val  { color:#b0d0e8; } .note { color:#3a6050; font-size:0.7rem; }
+  .dim  { color:#4a6050; }
+  #summary { margin-top:1rem; font-size:0.82rem; }
+</style>
+</head>
+<body>
+<h1>Phase 9 — Biaxial PM Solver Verification</h1>
+<p class="note">
+  XY-plane biaxial: n_fast(φ)=[sin²φ/nx²+cos²φ/ny²]^(-½), n_slow=nz<br>
+  Crystals: KTP (Type-II XY, φ≈23.5°), LBO (Type-I XY noncritical)
+</p>
+
+<script src="../01-crystals/bbo.js"></script>
+<script src="../01-crystals/ktp.js"></script>
+<script src="../01-crystals/lbo.js"></script>
+<script src="../01-crystals/kdp.js"></script>
+<script src="../01-crystals/ppln.js"></script>
+<script src="../01-crystals/index.js"></script>
+<script src="sellmeier.js"></script>
+<script src="phase-match.js"></script>
+
+<script>
+const DEG = Math.PI / 180;
+let pass = 0, fail = 0;
+
+function check(label, computed, expected, tol, unit='') {
+  const delta = Math.abs(computed - expected);
+  const ok = isFinite(computed) && delta <= tol;
+  ok ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="val">${isFinite(computed) ? computed.toFixed(4) : 'null'} ${unit}</td>
+    <td class="val">${expected.toFixed(4)} ${unit}</td>
+    <td class="${ok?'pass':'fail'}">${isFinite(computed)?delta.toFixed(4):'—'}</td>
+    <td class="${ok?'pass':'fail'}">${ok?'✓':'✗'}</td>
+  </tr>`;
+}
+function checkRange(label, computed, lo, hi, unit='') {
+  const ok = isFinite(computed) && computed >= lo && computed <= hi;
+  ok ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="val">${isFinite(computed) ? computed.toFixed(4) : 'null'} ${unit}</td>
+    <td class="val">[${lo}, ${hi}] ${unit}</td>
+    <td class="${ok?'pass':'fail'}">—</td>
+    <td class="${ok?'pass':'fail'}">${ok?'✓':'✗'}</td>
+  </tr>`;
+}
+function checkNull(label, computed) {
+  const ok = computed === null;
+  ok ? pass++ : fail++;
+  return `<tr>
+    <td class="val">${label}</td>
+    <td class="val">${computed}</td>
+    <td class="val">null</td>
+    <td class="${ok?'pass':'fail'}">—</td>
+    <td class="${ok?'pass':'fail'}">${ok?'✓':'✗'}</td>
+  </tr>`;
+}
+function hdr() {
+  return '<tr><th>Check</th><th>Computed</th><th>Expected</th><th>Δ</th><th>OK</th></tr>';
+}
+
+// ── 1. neEff_biaxial_xy: boundary values ────────────────────────────────────
+const s1 = document.createElement('h2');
+s1.textContent = '1. neEff_biaxial_xy — boundary conditions';
+document.body.appendChild(s1);
+{
+  const t1 = document.createElement('table');
+  const ny_1064 = KTP.n(1064e-9, 'y');
+  const nx_1064 = KTP.n(1064e-9, 'x');
+  const nz_1064 = KTP.n(1064e-9, 'z');
+  // At φ=0° (k̂ along x): in-plane polarization = y → n_fast = ny
+  const nf_0   = neEff_biaxial_xy(0, 1064e-9, KTP);
+  // At φ=90° (k̂ along y): in-plane polarization = x → n_fast = nx
+  const nf_90  = neEff_biaxial_xy(90*DEG, 1064e-9, KTP);
+  // noEff_biaxial_xy = nz
+  const ns     = noEff_biaxial_xy(1064e-9, KTP);
+
+  t1.innerHTML = hdr() +
+    check('KTP neEff_biaxial_xy(φ=0°, 1064nm) = ny', nf_0, ny_1064, 1e-6) +
+    check('KTP neEff_biaxial_xy(φ=90°, 1064nm) = nx', nf_90, nx_1064, 1e-6) +
+    check('KTP noEff_biaxial_xy(1064nm) = nz', ns, nz_1064, 1e-6) +
+    `<tr><td class="note" colspan="5">KTP 1064nm: nx=${nx_1064.toFixed(4)}, ny=${ny_1064.toFixed(4)}, nz=${nz_1064.toFixed(4)}</td></tr>`;
+  document.body.appendChild(t1);
+}
+
+// ── 2. neEff_biaxial_xy monotonic (φ=0 → nx≤n_fast(φ)≤ny) ──────────────────
+const s2 = document.createElement('h2');
+s2.textContent = '2. neEff_biaxial_xy — monotonic in [nx, ny]';
+document.body.appendChild(s2);
+{
+  const t2 = document.createElement('table');
+  const nx = KTP.n(1064e-9, 'x'), ny = KTP.n(1064e-9, 'y');
+  const vals = [0, 15, 30, 45, 60, 90].map(d => neEff_biaxial_xy(d*DEG, 1064e-9, KTP));
+  let mono = '<tr><th>φ</th><th>n_fast</th><th>in [nx,ny]</th><th></th><th>OK</th></tr>';
+  for (let i=0; i<vals.length; i++) {
+    const v = vals[i]; const ok = v >= nx - 1e-10 && v <= ny + 1e-10; ok ? pass++ : fail++;
+    mono += `<tr><td>${[0,15,30,45,60,90][i]}°</td><td class="val">${v.toFixed(6)}</td>
+      <td class="val">[${nx.toFixed(4)}, ${ny.toFixed(4)}]</td><td>—</td>
+      <td class="${ok?'pass':'fail'}">${ok?'✓':'✗'}</td></tr>`;
+  }
+  t2.innerHTML = mono;
+  document.body.appendChild(t2);
+}
+
+// ── 3. Δk at known KTP PM angle (φ=23.5°, Type-II SF→F) ────────────────────
+const s3 = document.createElement('h2');
+s3.textContent = '3. ΔK at known KTP Type-II XY angle (φ=23.5°)';
+document.body.appendChild(s3);
+{
+  const t3 = document.createElement('table');
+  const phi = 23.5 * DEG;
+  const dk  = deltaK_biaxial_typeII_xy_f(phi, 1064e-9, KTP);
+  const nf  = neEff_biaxial_xy(phi, 1064e-9, KTP);
+  const nf2 = neEff_biaxial_xy(phi, 532e-9, KTP);
+  const ns  = noEff_biaxial_xy(1064e-9, KTP);
+
+  t3.innerHTML = hdr() +
+    check('Δk_typeII_xy_f at φ=23.5° (≈0)',  dk / 1e3, 0, 5e3, 'rad/m ÷1k') +
+    check('2·n_fast(532) ≈ nz(1064)+n_fast(1064)',
+          2*nf2, ns+nf, 2e-3) +
+    `<tr><td class="note" colspan="5">n_fast(1064)=${nf.toFixed(4)}, n_fast(532)=${nf2.toFixed(4)}, nz(1064)=${ns.toFixed(4)} → 2nf2=${(2*nf2).toFixed(4)} vs ns+nf=${(ns+nf).toFixed(4)}</td></tr>`;
+  document.body.appendChild(t3);
+}
+
+// ── 4. solveSHG_biaxial(KTP, 1064nm) ────────────────────────────────────────
+const s4 = document.createElement('h2');
+s4.textContent = '4. solveSHG_biaxial(KTP, 1064nm) → φ≈23.5° Type-II';
+document.body.appendChild(s4);
+{
+  const t4 = document.createElement('table');
+  const results = solveSHG_biaxial(KTP, 1064e-9);
+  const typeII = results.find(r => r.type === 'Type-II' && r.plane === 'XY');
+  const typeI  = results.find(r => r.type === 'Type-I'  && r.plane === 'XY');
+
+  t4.innerHTML = hdr() +
+    (typeII
+      ? checkRange('KTP Type-II XY φ ∈ [20°, 30°] (Kato94 gives ~24.8°)', typeII.theta_deg, 20, 30, '°') +
+        check('Δk at PM angle ≈ 0',
+              deltaK_biaxial_typeII_xy_f(typeII.theta_deg*DEG, 1064e-9, KTP), 0, 1e4, 'rad/m') +
+        `<tr><td class="note" colspan="5">Type-II XY: process=${typeII.process}, φ=${typeII.theta_deg.toFixed(3)}°, n_pump=${typeII.n_pump.toFixed(4)}, n_sh=${typeII.n_sh.toFixed(4)}</td></tr>`
+      : `<tr><td class="fail" colspan="5">✗ Type-II XY not found</td></tr>`
+    ) +
+    (typeI
+      ? `<tr><td class="note" colspan="5">Also found: Type-I XY ${typeI.process} φ=${typeI.theta_deg.toFixed(3)}°</td></tr>`
+      : '') +
+    `<tr><td class="note" colspan="5">All results: ${results.map(r=>r.type+' '+r.plane+' '+r.process+' φ='+r.theta_deg.toFixed(2)+'°').join(' | ') || 'none'}</td></tr>`;
+  document.body.appendChild(t4);
+}
+
+// ── 5. solveSHG_biaxial(LBO, 1064nm) ────────────────────────────────────────
+const s5 = document.createElement('h2');
+s5.textContent = '5. solveSHG_biaxial(LBO, 1064nm) → Type-I XY noncritical';
+document.body.appendChild(s5);
+{
+  const t5 = document.createElement('table');
+  const results = solveSHG_biaxial(LBO, 1064e-9);
+  const typeI = results.find(r => r.type === 'Type-I' && r.plane === 'XY');
+
+  t5.innerHTML = hdr() +
+    (typeI
+      ? checkRange('LBO Type-I XY φ ∈ [0°, 20°] (noncritical)', typeI.theta_deg, 0, 20, '°') +
+        check('Δk at PM angle ≈ 0',
+              deltaK_biaxial_typeI_xy_ssf(typeI.theta_deg*DEG, 1064e-9, LBO), 0, 1e4, 'rad/m') +
+        `<tr><td class="note" colspan="5">LBO Type-I XY: process=${typeI.process}, φ=${typeI.theta_deg.toFixed(3)}°, n_pump=${typeI.n_pump.toFixed(4)}, n_sh=${typeI.n_sh.toFixed(4)}</td></tr>`
+      : `<tr><td class="fail" colspan="5">✗ Type-I XY not found</td></tr>`
+    ) +
+    `<tr><td class="note" colspan="5">All results: ${results.map(r=>r.type+' '+r.plane+' '+r.process+' φ='+r.theta_deg.toFixed(2)+'°').join(' | ') || 'none'}</td></tr>`;
+  document.body.appendChild(t5);
+}
+
+// ── 6. solveSHG() dispatch — biaxial now works ───────────────────────────────
+const s6 = document.createElement('h2');
+s6.textContent = '6. solveSHG() dispatch — biaxial crystals now return results';
+document.body.appendChild(s6);
+{
+  const t6 = document.createElement('table');
+  const ktp_r = solveSHG(KTP, 1064e-9);
+  const lbo_r = solveSHG(LBO, 1064e-9);
+  const bbo_r = solveSHG(BBO, 1064e-9);  // regression: uniaxial still works
+  const ktp_has = ktp_r.some(r => r.type === 'Type-II');
+  const lbo_has = lbo_r.some(r => r.type === 'Type-I');
+  const bbo_ok  = bbo_r.some(r => r.type === 'Type-I' && Math.abs(r.theta_deg - 22.8) < 0.5);
+
+  const boolCheck = (label, val) => {
+    val ? pass++ : fail++;
+    return `<tr><td class="val">${label}</td><td class="${val?'pass':'fail'}">${val?'✓ true':'✗ false'}</td><td class="val">true</td><td>—</td><td class="${val?'pass':'fail'}">${val?'✓':'✗'}</td></tr>`;
+  };
+
+  t6.innerHTML = hdr() +
+    boolCheck('solveSHG(KTP) returns Type-II result', ktp_has) +
+    boolCheck('solveSHG(LBO) returns Type-I result',  lbo_has) +
+    boolCheck('solveSHG(BBO) regression — Type-I θ≈22.8°', bbo_ok) +
+    `<tr><td class="note" colspan="5">KTP: ${ktp_r.length} result(s) | LBO: ${lbo_r.length} result(s) | BBO: ${bbo_r.length} result(s)</td></tr>`;
+  document.body.appendChild(t6);
+}
+
+// ── 7. Δk sweep around PM angle for KTP (sign change check) ─────────────────
+const s7 = document.createElement('h2');
+s7.textContent = '7. Δk sweep around KTP Type-II XY PM angle';
+document.body.appendChild(s7);
+{
+  const t7 = document.createElement('table');
+  const ktpPM = solveSHG_biaxial(KTP, 1064e-9).find(r => r.type === 'Type-II' && r.plane === 'XY');
+  if (ktpPM) {
+    const phi_pm = ktpPM.theta_deg;
+    let rows = '<tr><th>φ</th><th>Δk (rad/m)</th><th>Sign</th><th></th><th></th></tr>';
+    const angles = [phi_pm - 5, phi_pm - 2, phi_pm - 0.5, phi_pm, phi_pm + 0.5, phi_pm + 2, phi_pm + 5];
+    const dks = angles.map(a => deltaK_biaxial_typeII_xy_f(a*DEG, 1064e-9, KTP));
+    for (let i=0; i<angles.length; i++) {
+      const isPM = Math.abs(angles[i] - phi_pm) < 0.1;
+      rows += `<tr><td class="val">${angles[i].toFixed(1)}°${isPM?' ← PM':''}</td>
+        <td class="val">${dks[i].toFixed(0)}</td>
+        <td class="dim">${dks[i]>0?'+':dks[i]<0?'-':'0'}</td><td>—</td><td></td></tr>`;
+    }
+    // Check sign change: below PM → positive or negative, crosses zero
+    const belowPM = dks[0], abovePM = dks[dks.length-1];
+    const signChange = belowPM * abovePM < 0;
+    signChange ? pass++ : fail++;
+    rows += `<tr><td class="val">Sign change across PM angle</td>
+      <td class="${signChange?'pass':'fail'}">${signChange?'✓ yes':'✗ no'}</td>
+      <td class="val">yes</td><td>—</td><td class="${signChange?'pass':'fail'}">${signChange?'✓':'✗'}</td></tr>`;
+    t7.innerHTML = rows;
+  } else {
+    t7.innerHTML = '<tr><td class="fail" colspan="5">KTP Type-II not found — skip</td></tr>';
+    fail++;
+  }
+  document.body.appendChild(t7);
+}
+
+// ── Summary ──────────────────────────────────────────────────────────────────
+const summary = document.createElement('div');
+summary.id = 'summary';
+const total = pass + fail;
+summary.innerHTML = `<span class="${fail===0?'pass':'fail'}">${pass}/${total} checks passed</span>` +
+  (fail > 0 ? ` — <span class="fail">${fail} FAILED</span>` : ' — all OK');
+document.body.appendChild(summary);
+</script>
+</body>
+</html>

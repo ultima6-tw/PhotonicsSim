@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>04-elements demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+  #viewport { width: 100vw; height: 100vh; }
+  #overlay {
+    position: fixed; top: 1rem; left: 1rem;
+    background: rgba(13,17,23,0.85); border: 1px solid #2a4a6a;
+    padding: 0.8rem 1.1rem; border-radius: 6px; font-size: 0.78rem; line-height: 1.8;
+    pointer-events: none; min-width: 240px;
+  }
+  #overlay h3 { color: #7ec8e3; margin-bottom: 0.3rem; font-size: 0.85rem; }
+  .dim { color: #5a7a9a; }
+  .hi  { color: #7ed87e; }
+  .warn { color: #e3c07e; }
+  #hint {
+    position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: rgba(13,17,23,0.7); border: 1px solid #2a3a4a;
+    padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.72rem; color: #4a6a8a;
+    pointer-events: none;
+  }
+  #controls {
+    position: fixed; top: 1rem; right: 1rem;
+    background: rgba(13,17,23,0.85); border: 1px solid #2a4a6a;
+    padding: 0.8rem 1rem; border-radius: 6px; font-size: 0.78rem; line-height: 2;
+    min-width: 200px;
+  }
+  #controls h4 { color: #7ec8e3; margin-bottom: 0.2rem; font-size: 0.8rem; }
+  #controls label { color: #c0d0e0; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+  #controls input[type=checkbox] { accent-color: #7ec8e3; }
+  #controls input[type=range] { width: 100px; accent-color: #7ec8e3; }
+  .legend { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+</style>
+</head>
+<body>
+<div id="viewport"></div>
+
+<div id="overlay">
+  <h3>04-elements — Optical Element Meshes</h3>
+  <div class="dim">System: <span id="sys">—</span></div>
+  <div class="hi">Elements: <span id="elinfo">—</span></div>
+  <div id="legend" style="margin-top:0.4rem;">
+    <div class="legend"><span class="swatch" style="background:#b8d8f0"></span><span class="dim">converging lens (biconvex)</span></div>
+    <div class="legend"><span class="swatch" style="background:#cbb8f0"></span><span class="dim">diverging lens (biconcave)</span></div>
+    <div class="legend"><span class="swatch" style="background:#d8e8f8"></span><span class="dim">mirror</span></div>
+  </div>
+</div>
+
+<div id="controls">
+  <h4>Visibility</h4>
+  <label><input type="checkbox" id="showEnv" checked> Gaussian envelope</label>
+  <label><input type="checkbox" id="showRays" checked> Ray lines</label>
+  <label><input type="checkbox" id="showEl" checked> Element meshes</label>
+  <div style="margin-top:0.5rem;">
+    <label>Aperture scale
+      <input type="range" id="apScale" min="2" max="8" step="0.5" value="4.5">
+      <span id="apScale-val">4.5×</span>
+    </label>
+  </div>
+</div>
+
+<div id="hint">Left-drag: rotate &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../../01-physics/01-matrices/matrices.js"></script>
+<script src="../../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../../01-physics/04-sampler/sampler.js"></script>
+<script src="../01-scene/scene.js"></script>
+<script src="../02-envelope/envelope.js"></script>
+<script src="../03-rays/rays.js"></script>
+<script src="elements.js"></script>
+
+<script>
+// System with converging + diverging lens (shows both element shapes)
+const SYSTEM = {
+  beam: { lambda: 1064e-9, w0: 1e-3, waistZ: 0 },
+  elements: [
+    { type: 'free',  d: 0.20 },
+    { type: 'lens',  f:  0.25 },   // converging → biconvex
+    { type: 'free',  d: 0.40 },
+    { type: 'lens',  f: -0.20 },   // diverging  → biconcave
+    { type: 'free',  d: 0.60 },
+  ],
+  sampling: { perSegment: 120 },
+};
+
+// ── Scene ─────────────────────────────────────────────────────────────────────
+const S = createScene(document.getElementById('viewport'));
+
+let envGroup   = null;
+let ringGroup  = null;
+let raysGroup  = null;
+let elGroup    = null;
+
+function rebuild(apScale) {
+  if (envGroup)  S.scene.remove(envGroup);
+  if (ringGroup) S.scene.remove(ringGroup);
+  if (raysGroup) S.scene.remove(raysGroup);
+  if (elGroup)   S.scene.remove(elGroup);
+
+  const bd = buildBeamData(SYSTEM);
+  const { gaussian, rays, optics, meta } = bd;
+  const L = meta.totalLength;
+
+  S.setSystemLength(L);
+
+  // Gaussian envelope
+  envGroup = buildEnvelope(gaussian.samples, { radialSegments: 48, opacity: 0.13 });
+  S.addToScene(envGroup);
+  const tScale = envGroup.userData.transverseScale;
+
+  // Waist rings
+  ringGroup = buildWaistRings(gaussian.waists, tScale);
+  S.addToScene(ringGroup);
+
+  // Ray lines (thinner azimuthal count — elements are the focus)
+  raysGroup = buildRayLines(rays.paths, tScale, { azimuthalCount: 2, opacity: 0.40 });
+  S.addToScene(raysGroup);
+
+  // Optical element meshes (using custom aperture scale)
+  const aperture = meta.w0 * tScale * apScale;
+  const group = new THREE.Group();
+  optics.forEach(el => {
+    const p = el.params || el;
+    let elMesh = null;
+
+    if (el.type === 'lens' || el.type === 'thickLens' || el.type === 'beamExpander') {
+      elMesh = buildLensMesh(p, aperture);
+    } else if (el.type === 'mirror') {
+      elMesh = buildMirrorMesh(p, aperture);
+    } else if (el.type === 'interface') {
+      elMesh = buildInterfaceMesh(p, aperture);
+    }
+
+    if (elMesh) {
+      elMesh.position.set(0, 0, el.z);
+      group.add(elMesh);
+    }
+  });
+  elGroup = group;
+  S.addToScene(elGroup);
+
+  // Overlay
+  document.getElementById('sys').textContent =
+    `λ=${(meta.lambda*1e9).toFixed(0)}nm  w₀=${(meta.w0*1e3).toFixed(1)}mm  L=${L.toFixed(2)}m`;
+
+  const descriptions = optics.map(el => {
+    const p = el.params || el;
+    if (el.type === 'lens') {
+      const f = p.f !== undefined ? p.f : (p.params && p.params.f);
+      return `${(f>0?'conv.':'div.')} f=${(f*100).toFixed(0)}cm`;
+    }
+    if (el.type === 'mirror') return 'mirror';
+    if (el.type === 'interface') return 'interface';
+    return el.type;
+  });
+  document.getElementById('elinfo').textContent = descriptions.join('  /  ');
+
+  // Sync visibility checkboxes
+  envGroup.visible  = document.getElementById('showEnv').checked;
+  ringGroup.visible = envGroup.visible;
+  raysGroup.visible = document.getElementById('showRays').checked;
+  elGroup.visible   = document.getElementById('showEl').checked;
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('apScale').addEventListener('input', function() {
+  document.getElementById('apScale-val').textContent = this.value + '×';
+  rebuild(parseFloat(this.value));
+});
+
+['showEnv','showRays','showEl'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (!envGroup) return;
+    if (id === 'showEnv')  { envGroup.visible = ringGroup.visible = document.getElementById(id).checked; }
+    if (id === 'showRays') { raysGroup.visible = document.getElementById(id).checked; }
+    if (id === 'showEl')   { elGroup.visible   = document.getElementById(id).checked; }
+  });
+});
+
+// ── Initial render ─────────────────────────────────────────────────────────────
+rebuild(parseFloat(document.getElementById('apScale').value));
+S.animate();
+</script>
+</body>
+</html>

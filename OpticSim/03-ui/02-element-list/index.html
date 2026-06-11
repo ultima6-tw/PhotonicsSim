@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>02-element-list demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; }
+  #panel-body::-webkit-scrollbar { width: 5px; }
+  #panel-body::-webkit-scrollbar-track { background: #080d14; }
+  #panel-body::-webkit-scrollbar-thumb { background: #1a2a3a; border-radius: 3px; }
+
+  /* ── Selected element info ─────────────────────── */
+  .sel-box {
+    background: #080f18; border: 1px solid #1a2a3a; border-radius: 4px;
+    padding: 0.5rem 0.65rem; font-size: 0.75rem; line-height: 1.8;
+  }
+  .sel-box .sel-title { color: #5a9aba; font-size: 0.7rem; text-transform:uppercase;
+    letter-spacing:0.06em; margin-bottom:0.3rem; }
+  .sel-row { display:flex; justify-content:space-between; }
+  .sel-key { color: #3a6070; }
+  .sel-val { color: #7ec8e3; font-family: monospace; }
+  .sel-none { color: #2a4050; font-style: italic; font-size: 0.73rem; }
+
+  /* ── Viewport hint ─────────────────────────────── */
+  #hint {
+    position: absolute; bottom: 0.6rem; left: 50%; transform: translateX(-50%);
+    background: rgba(6,11,18,0.7); border: 1px solid #1a2a3a;
+    padding: 0.3rem 0.85rem; border-radius: 20px;
+    font-family: monospace; font-size: 0.7rem; color: #3a5a7a;
+    pointer-events: none; white-space: nowrap;
+  }
+  #toast {
+    position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%);
+    background: #0e2438; border: 1px solid #2a5070;
+    padding: 0.3rem 1rem; border-radius: 20px;
+    font-family: monospace; font-size: 0.72rem; color: #7ec8e3;
+    pointer-events: none; opacity: 0; transition: opacity 0.2s;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script> window.THREE_OrbitControls = THREE.OrbitControls; </script>
+
+<script src="../../01-physics/01-matrices/matrices.js"></script>
+<script src="../../01-physics/02-gaussian/gaussian.js"></script>
+<script src="../../01-physics/03-raytrace/raytrace.js"></script>
+<script src="../../01-physics/04-sampler/sampler.js"></script>
+<script src="../../02-renderer/01-scene/scene.js"></script>
+<script src="../../02-renderer/02-envelope/envelope.js"></script>
+<script src="../../02-renderer/03-rays/rays.js"></script>
+<script src="../../02-renderer/04-elements/elements.js"></script>
+<script src="../01-panel-shell/panel.js"></script>
+<script src="element-list.js"></script>
+
+<script>
+// ── Initial system ────────────────────────────────────────────────────────
+const INIT_ELEMENTS = [
+  { type: 'free', d: 0.20 },
+  { type: 'lens', f: 0.25 },
+  { type: 'free', d: 0.40 },
+  { type: 'lens', f: -0.20 },
+  { type: 'free', d: 0.60 },
+];
+
+const BEAM_CFG = { lambda: 1064e-9, w0: 1e-3, waistZ: 0 };
+
+// ── Panel shell ───────────────────────────────────────────────────────────
+const UI = createPanelShell(document.body);
+const S  = createScene(UI.viewport);
+
+// ── 3D render state ───────────────────────────────────────────────────────
+let envGroup = null, ringGroup = null, raysGroup = null, elGroup = null;
+
+function renderBeam(elements) {
+  if (!elements || elements.length === 0) return;
+
+  if (envGroup)  S.scene.remove(envGroup);
+  if (ringGroup) S.scene.remove(ringGroup);
+  if (raysGroup) S.scene.remove(raysGroup);
+  if (elGroup)   S.scene.remove(elGroup);
+
+  let bd;
+  try {
+    bd = buildBeamData({ beam: BEAM_CFG, elements, sampling: { perSegment: 100 } });
+  } catch (e) {
+    UI.setStats('⚠  ' + e.message);
+    return;
+  }
+
+  const { gaussian, rays, optics, meta } = bd;
+  const L = meta.totalLength;
+  if (L <= 0) return;
+
+  S.setSystemLength(L);
+
+  envGroup  = buildEnvelope(gaussian.samples, { radialSegments: 48, opacity: 0.13 });
+  S.addToScene(envGroup);
+  const tScale = envGroup.userData.transverseScale;
+
+  ringGroup = buildWaistRings(gaussian.waists, tScale);
+  S.addToScene(ringGroup);
+
+  raysGroup = buildRayLines(rays.paths, tScale, { azimuthalCount: 3, opacity: 0.42 });
+  S.addToScene(raysGroup);
+
+  const maxBeamW = Math.max(...gaussian.samples.map(s => s.w));
+  elGroup = buildElements(optics, tScale, maxBeamW);
+  S.addToScene(elGroup);
+
+  const zR = rayleighRange(meta.w0, meta.lambda);
+  const waistStr = gaussian.waists.length
+    ? gaussian.waists.map(w => `z=${(w.z*100).toFixed(1)}cm w=${(w.w*1e6).toFixed(0)}µm`).join('  ')
+    : 'no intermediate waist';
+  UI.setStats(
+    `λ=${(meta.lambda*1e9).toFixed(0)}nm  ` +
+    `w₀=${(meta.w0*1e3).toFixed(2)}mm  ` +
+    `zR=${zR.toFixed(2)}m  ` +
+    `L=${L.toFixed(2)}m  │  ` + waistStr
+  );
+}
+
+// ── Selected element display ──────────────────────────────────────────────
+const { content: elContent }  = UI.addSection('sec-elements', 'System Elements');
+const { content: selContent } = UI.addSection('sec-selected', 'Selected Element', false);
+
+function showSelected(el) {
+  selContent.innerHTML = '';
+  if (!el) {
+    const msg = document.createElement('div');
+    msg.className = 'sel-none';
+    msg.textContent = 'Click an element to inspect';
+    selContent.appendChild(msg);
+    return;
+  }
+  const box = document.createElement('div');
+  box.className = 'sel-box';
+
+  const meta = { free:'Free space', lens:'Thin lens', mirror:'Mirror', interface:'Interface', beamExpander:'Beam expander' };
+  box.innerHTML = `<div class="sel-title">${meta[el.type] || el.type}</div>`;
+
+  const params = { ...el };
+  delete params.type;
+  Object.entries(params).forEach(([k, v]) => {
+    let display = v;
+    if (k === 'f' || k === 'd' || k === 'R') {
+      if (!isFinite(v)) { display = '∞'; }
+      else if (k === 'f') display = `${(v*1000).toFixed(1)} mm`;
+      else if (k === 'd') display = `${(v*100).toFixed(1)} cm`;
+      else if (k === 'R') display = `${(v*1000).toFixed(1)} mm`;
+    }
+    const row = document.createElement('div');
+    row.className = 'sel-row';
+    row.innerHTML = `<span class="sel-key">${k}</span><span class="sel-val">${display}</span>`;
+    box.appendChild(row);
+  });
+  selContent.appendChild(box);
+}
+
+// ── Element list ──────────────────────────────────────────────────────────
+const EL = createElementList(elContent, INIT_ELEMENTS, (elements, selIdx, structural) => {
+  showSelected(EL.getSelected());
+  if (structural) renderBeam(elements);
+});
+
+// ── Toast helper ──────────────────────────────────────────────────────────
+const toast = document.createElement('div');
+toast.id = 'toast';
+UI.viewport.appendChild(toast);
+let toastTimer = null;
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 1800);
+}
+
+// ── Compute button ────────────────────────────────────────────────────────
+UI.computeBtn.addEventListener('click', () => {
+  renderBeam(EL.getElements());
+  showToast('Computed');
+});
+
+// ── Viewport overlays ─────────────────────────────────────────────────────
+const hint = document.createElement('div');
+hint.id = 'hint';
+hint.innerHTML = 'Left-drag: rotate &nbsp;|&nbsp; Right-drag: pan &nbsp;|&nbsp; Scroll: zoom';
+UI.viewport.appendChild(hint);
+
+// ── Initial render ────────────────────────────────────────────────────────
+showSelected(EL.getSelected());
+renderBeam(INIT_ELEMENTS);
+S.animate();
+</script>
+</body>
+</html>
